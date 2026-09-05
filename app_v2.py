@@ -1,4 +1,4 @@
-# VERZE 4.1.1 - Správa flotily - RHJ Gastro (Full Master Release - Integrated Fleet)
+# VERZE 4.1.2 - Správa flotily - RHJ Gastro (Full Master Release - Integrated Fleet)
 # ==============================================================================
 import io
 import os
@@ -687,7 +687,7 @@ CLEAN_CSS = """
         border-radius: 10px;
         padding: 15px;
         border: 1px solid #e2e8f0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        box-schema: 0 2px 8px rgba(0,0,0,0.05);
         height: 100%;
     }
     
@@ -1562,16 +1562,18 @@ elif akt_sekce == '📱 QR Kód':
     st.header('📱 Generování QR kódů pro stínítka vozidel')
     st.markdown("Vyberte konkrétní vozidlo a vygenerujte specifický QR kód pro sluneční clonu.")
     
-    local_ip = "127.0.0.1"
+    # OPRAVENO PRO STREAMLIT CLOUD: Zjištění reálné domény aplikace nebo možnost fallbacku
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(('10.255.255.255', 1))
-        local_ip = s.getsockname()[0]
-        s.close()
+        # Pokus o získání hostitele z request headers, pokud je dostupné, nebo použití výchozí cloudové URL
+        zakladni_url = st.context.headers.get("Host", None)
+        if zakladni_url:
+            if not zakladni_url.startswith("http"):
+                zakladni_url = f"https://{zakladni_url}"
+        else:
+            # Zde si případně můžete upravit URL na vaši ostrou Streamlit Cloud adresu, např: "https://vaše-aplikace.streamlit.app"
+            zakladni_url = "https://rhjgastro-flotila.streamlit.app" 
     except Exception:
-        pass
-    
-    zakladni_url = f"http://{local_ip}:8501"
+        zakladni_url = "https://rhjgastro-flotila.streamlit.app"
     
     df_auta_qr = get_vsechna_auta()
     if not df_auta_qr.empty:
