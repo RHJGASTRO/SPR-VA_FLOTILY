@@ -767,14 +767,14 @@ if qr_ridic != "Neznámý řidič" or qr_spz != "Neznámá SPZ" or st.session_st
             
             if is_ev_car:
                 d_zdroj = st.selectbox("Zdroj nabíjení", ["Wallbox", "Zasuvka 220"])
-                st.markdown("#### 🔋 Počáteční stav baterie a kWh")
-                d_p_od = st.slider("Počáteční stav baterie (%)", min_value=0, max_value=100, value=20, step=1)
-                d_p_do = 100
+                st.markdown("#### 🔋 Nastavení nabíjení a teploty baterie")
+                d_p_od = st.slider("Počáteční stav baterie (%)", min_value=0, max_value=100, value=20, step=1, key="d_p_od_slider")
+                d_p_do = st.slider("Cílový stav baterie (%)", min_value=0, max_value=100, value=100, step=1, key="d_p_do_slider")
+                d_teplota = st.number_input("Teplota (°C)", value=15.0, step=1.0, key="d_teplota_input")
                 
                 total_battery_capacity = 50.0
-                missing_percentage = 100 - d_p_od
+                missing_percentage = max(0, d_p_do - d_p_od)
                 d_mnozstvi = round((missing_percentage / 100.0) * total_battery_capacity, 2)
-                d_teplota = 0.0
                 
                 with get_connection() as conn_c:
                     cur_c = conn_c.cursor()
@@ -1251,15 +1251,15 @@ elif akt_sekce == '⛽ Tankování':
             
             is_ev_selected = zisti_zda_je_ev(t_spz)
             if is_ev_selected:
-                t_zdroj = st.selectbox('Zdroj nabíjení', ['Wallbox', 'Zasuvka 220'])
-                st.markdown("#### 🔋 Počáteční stav baterie a kWh")
-                t_p_od = st.slider('Počáteční stav baterie (%)', min_value=0, max_value=100, value=20, step=1)
-                t_p_do = 100
+                t_zdroj = st.selectbox('Zdroj nabíjení', ['Wallbox', 'Zasuvka 220'], key='t_zdroj_ev')
+                st.markdown("#### 🔋 Nastavení nabíjení a teploty baterie")
+                t_p_od = st.slider('Počáteční stav baterie (%)', min_value=0, max_value=100, value=20, step=1, key='t_p_od_slider')
+                t_p_do = st.slider('Cílový stav baterie (%)', min_value=0, max_value=100, value=100, step=1, key='t_p_do_slider')
+                t_teplota = st.number_input('Teplota (°C)', value=15.0, step=1.0, key='t_teplota_input')
                 
                 total_battery_capacity = 50.0
-                missing_percentage = 100 - t_p_od
+                missing_percentage = max(0, t_p_do - t_p_od)
                 t_mnozstvi = round((missing_percentage / 100.0) * total_battery_capacity, 2)
-                t_teplota = 0.0
                 
                 with get_connection() as conn_c:
                     cur_c = conn_c.cursor()
