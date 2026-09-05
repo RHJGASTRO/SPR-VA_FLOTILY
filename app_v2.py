@@ -1567,7 +1567,6 @@ elif akt_sekce == '📱 QR Kód':
     st.header('📱 Generování QR kódů pro stínítka vozidel')
     st.markdown("Vyberte konkrétní vozidlo a vygenerujte specifický QR kód pro sluneční clonu.")
     
-    # Použití ostré Streamlit Cloud URL namísto lokální IP z notebooku
     zakladni_url = "https://spr-vaflotily-ys5pzghvkp3zoyxgebryvv.streamlit.app"
     
     df_auta_qr = get_vsechna_auta()
@@ -1584,7 +1583,6 @@ elif akt_sekce == '📱 QR Kód':
         selected_label = st.selectbox("Vyberte vozidlo pro generování QR kódu:", list(options_map.keys()))
         qr_spz_vyber, staly_ridic_auta = options_map[selected_label]
         
-        # URL encoding parametrů pro bezproblémové načtení v mobilu i s diakritikou/mezerami
         enc_spz = quote(str(qr_spz_vyber))
         enc_ridic = quote(str(staly_ridic_auta))
         cilova_url = f"{zakladni_url}/?spz={enc_spz}&ridic={enc_ridic}"
