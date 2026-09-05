@@ -1,352 +1,340 @@
-# VERZE 4.1.1 - Správa flotily - RHJ Gastro (Full Master Release - Integrated Fleet)
+# VERZE 4.1.3 - Správa flotily - RHJ Gastro (Final Master Release - QR & Hosting Fixed)
 # ==============================================================================
+import hashlib
 import io
 import os
-import sqlite3
+import re
 import socket
+import sqlite3
 from datetime import datetime, timedelta
+from urllib.parse import quote
 import pandas as pd
 import plotly.express as px
 import qrcode
 import streamlit as st
 
 DB_NAME = 'flotila.db'
-SUPERVISOR_PASSWORD = 'supervisor789'
+# Zabezpečený hash supervizorského hesla (původně 'supervisor789')
+SUPERVISOR_PASSWORD_HASH = hashlib.sha256('supervisor789'.encode()).hexdigest()
 
 
 def get_connection():
     return sqlite3.connect(DB_NAME, timeout=10)
 
 
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
 def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS auta (
-            spz TEXT PRIMARY KEY,
-            nazev TEXT NOT NULL,
-            typ_pohonu TEXT NOT NULL,
-            stk_do TEXT,
-            dz_do TEXT,
-            pojisteni_do TEXT,
-            pneu_rozmer TEXT,
-            staly_ridic TEXT,
-            vin TEXT,
-            olej_interval INTEGER DEFAULT 10000
-        )
-    """)
-    
-    try:
-        cursor.execute("SELECT pojisteni_do FROM auta LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE auta ADD COLUMN pojisteni_do TEXT")
-
-    cursor.execute("SELECT COUNT(*) FROM auta")
-    if cursor.fetchone()[0] == 0:
-        vychozi_auta = [
-            ("2M88435", "Fiat Doblo", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "Kolářová Zuzana", "ZFA22300005463005", 10000),
-            ("4B33954", "Fiat Doblo", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "Švadlenková Denisa", "ZFA22300005443286", 10000),
-            ("5E81583", "Volkswagen Caddy", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/65 R15 (95T XL)", "Lokaj Martin", "WV1ZZZ2KZ9X101365", 10000),
-            ("5E94630", "Volkswagen Caddy", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/65 R15 (95T XL)", "NÁHRADNÍ", "WV1ZZZ2KZAX049128", 10000),
-            ("5Z49372", "Citroen Jumpy", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "215/60 R16C 103/101T (103/101)", "Mukařovský Martin", "VF7XUAH8FZ013373", 10000),
-            ("6E14928", "Fiat Doblo", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "Doležal Martin", "ZFA22300005374486", 10000),
-            ("6E24392", "Fiat Doblo LPG - náhradní", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "NÁHRADNÍ", "ZFA22300005559273", 10000),
-            ("6E74807", "Ford Transit", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/70 R15C (104/102R)", "Balog Marcel", "WF0SXXTTFS8R16015", 10000),
-            ("6E85382", "Peugeot Partner", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/65 R15 (91H)", "Sejpková Anna Marie", "VF3XT9HMOCZ005574", 10000),
-            ("6E94181", "IVECO", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "215/75 R17.5 (126/124M)", "ODPADY", "ZCFA80F0002004883", 10000),
-        ]
-        for auto in vychozi_auta:
-            cursor.execute("""
-                INSERT OR IGNORE INTO auta (spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin, olej_interval)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, auto)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS zaznamy (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            spz TEXT NOT NULL,
-            ridic TEXT,
-            datum TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            km INTEGER NOT NULL,
-            zdroj TEXT NOT NULL,
-            mnozstvi REAL NOT NULL,
-            cena REAL NOT NULL,
-            procenta_od REAL DEFAULT 0,
-            procenta_do REAL DEFAULT 0,
-            teplota REAL DEFAULT 0
-        )
-    """)
-    
-    for col, definition in [('procenta_od', 'REAL DEFAULT 0'), ('procenta_do', 'REAL DEFAULT 0'), ('teplota', 'REAL DEFAULT 0')]:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS auta (
+                spz TEXT PRIMARY KEY,
+                nazev TEXT NOT NULL,
+                typ_pohonu TEXT NOT NULL,
+                stk_do TEXT,
+                dz_do TEXT,
+                pojisteni_do TEXT,
+                pneu_rozmer TEXT,
+                staly_ridic TEXT,
+                vin TEXT,
+                olej_interval INTEGER DEFAULT 10000
+            )
+        """)
+        
         try:
-            cursor.execute(f"SELECT {col} FROM zaznamy LIMIT 1")
+            cursor.execute("SELECT pojisteni_do FROM auta LIMIT 1")
         except sqlite3.OperationalError:
-            cursor.execute(f"ALTER TABLE zaznamy ADD COLUMN {col} {definition}")
+            cursor.execute("ALTER TABLE auta ADD COLUMN pojisteni_do TEXT")
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS servis (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            spz TEXT NOT NULL,
-            ridic TEXT,
-            datum DATE DEFAULT CURRENT_DATE,
-            km INTEGER NOT NULL,
-            kategorie TEXT NOT NULL,
-            popis TEXT NOT NULL,
-            cena REAL NOT NULL
+        cursor.execute("SELECT COUNT(*) FROM auta")
+        if cursor.fetchone()[0] == 0:
+            vychozi_auta = [
+                ("2M88435", "Fiat Doblo", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "Kolářová Zuzana", "ZFA22300005463005", 10000),
+                ("4B33954", "Fiat Doblo", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "Švadlenková Denisa", "ZFA22300005443286", 10000),
+                ("5E81583", "Volkswagen Caddy", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/65 R15 (95T XL)", "Lokaj Martin", "WV1ZZZ2KZ9X101365", 10000),
+                ("5E94630", "Volkswagen Caddy", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/65 R15 (95T XL)", "NÁHRADNÍ", "WV1ZZZ2KZAX049128", 10000),
+                ("5Z49372", "Citroen Jumpy", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "215/60 R16C 103/101T (103/101)", "Mukařovský Martin", "VF7XUAH8FZ013373", 10000),
+                ("6E14928", "Fiat Doblo", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "Doležal Martin", "ZFA22300005374486", 10000),
+                ("6E24392", "Fiat Doblo LPG - náhradní", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "NÁHRADNÍ", "ZFA22300005559273", 10000),
+                ("6E74807", "Ford Transit", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/70 R15C (104/102R)", "Balog Marcel", "WF0SXXTTFS8R16015", 10000),
+                ("6E85382", "Peugeot Partner", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/65 R15 (91H)", "Sejpková Anna Marie", "VF3XT9HMOCZ005574", 10000),
+                ("6E94181", "IVECO", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "215/75 R17.5 (126/124M)", "ODPADY", "ZCFA80F0002004883", 10000),
+            ]
+            for auto in vychozi_auta:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO auta (spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin, olej_interval)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, auto)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS zaznamy (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                spz TEXT NOT NULL,
+                ridic TEXT,
+                datum TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                km INTEGER NOT NULL,
+                zdroj TEXT NOT NULL,
+                mnozstvi REAL NOT NULL,
+                cena REAL NOT NULL,
+                procenta_od REAL DEFAULT 0,
+                procenta_do REAL DEFAULT 0,
+                teplota REAL DEFAULT 0
+            )
+        """)
+        
+        for col, definition in [('procenta_od', 'REAL DEFAULT 0'), ('procenta_do', 'REAL DEFAULT 0'), ('teplota', 'REAL DEFAULT 0')]:
+            try:
+                cursor.execute(f"SELECT {col} FROM zaznamy LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute(f"ALTER TABLE zaznamy ADD COLUMN {col} {definition}")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS servis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                spz TEXT NOT NULL,
+                ridic TEXT,
+                datum DATE DEFAULT CURRENT_DATE,
+                km INTEGER NOT NULL,
+                kategorie TEXT NOT NULL,
+                popis TEXT NOT NULL,
+                cena REAL NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS zavady (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                spz TEXT NOT NULL,
+                ridic TEXT,
+                datum TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                popis TEXT NOT NULL,
+                stav TEXT DEFAULT 'Nahlášeno'
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ridici (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                jmeno TEXT NOT NULL UNIQUE,
+                telefon TEXT,
+                ridicak_do TEXT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS nastaveni (
+                klic TEXT PRIMARY KEY,
+                hodnota TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute(
+            "INSERT OR IGNORE INTO nastaveni (klic, hodnota) VALUES ('cena_kwh', '6.50')"
         )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS zavady (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            spz TEXT NOT NULL,
-            ridic TEXT,
-            datum TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            popis TEXT NOT NULL,
-            stav TEXT DEFAULT 'Nahlášeno'
+        # Výchozí heslo admin123 uložené jako hash
+        default_admin_hash = hashlib.sha256('admin123'.encode()).hexdigest()
+        cursor.execute(
+            "INSERT OR IGNORE INTO nastaveni (klic, hodnota) VALUES ('admin_heslo_hash', ?)", (default_admin_hash,)
         )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ridici (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            jmeno TEXT NOT NULL UNIQUE,
-            telefon TEXT,
-            ridicak_do TEXT
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS nastaveni (
-            klic TEXT PRIMARY KEY,
-            hodnota TEXT NOT NULL
-        )
-    """)
-
-    cursor.execute(
-        "INSERT OR IGNORE INTO nastaveni (klic, hodnota) VALUES ('cena_kwh', '6.50')"
-    )
-    cursor.execute(
-        "INSERT OR IGNORE INTO nastaveni (klic, hodnota) VALUES ('admin_heslo', 'admin123')"
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+        # Migrace starého textového hesla na hash, pokud existuje
+        cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'admin_heslo'")
+        old_pass_row = cursor.fetchone()
+        if old_pass_row:
+            old_pass = old_pass_row[0]
+            if len(old_pass) != 64:  # Není to sha256 hash
+                new_hash = hashlib.sha256(old_pass.encode()).hexdigest()
+                cursor.execute("UPDATE nastaveni SET hodnota = ? WHERE klic = 'admin_heslo_hash'", (new_hash,))
+            cursor.execute("DELETE FROM nastaveni WHERE klic = 'admin_heslo'")
+        conn.commit()
 
 
-def ziskej_admin_heslo():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'admin_heslo'")
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return row[0] if row else 'admin123'
+def ziskej_admin_heslo_hash():
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'admin_heslo_hash'")
+        row = cursor.fetchone()
+        return row[0] if row else hashlib.sha256('admin123'.encode()).hexdigest()
 
 
 def get_vsechna_auta():
-    conn = get_connection()
-    df = pd.read_sql_query(
-        'SELECT spz, nazev, typ_pohonu, staly_ridic, stk_do, dz_do, pojisteni_do, pneu_rozmer, vin, olej_interval FROM auta',
-        conn,
-    )
-    conn.close()
+    with get_connection() as conn:
+        df = pd.read_sql_query(
+            'SELECT spz, nazev, typ_pohonu, staly_ridic, stk_do, dz_do, pojisteni_do, pneu_rozmer, vin, olej_interval FROM auta',
+            conn,
+        )
     df = df.fillna('Neuveden')
     df.replace(['None', 'nan', ''], 'Neuveden', inplace=True)
     return df
 
 
 def get_zaznamy_paliva():
-    conn = get_connection()
-    df = pd.read_sql_query(
-        'SELECT id, spz, ridic, datum, km, zdroj, mnozstvi, cena, procenta_od, procenta_do, teplota FROM zaznamy ORDER BY datum DESC',
-        conn,
-    )
-    conn.close()
+    with get_connection() as conn:
+        df = pd.read_sql_query(
+            'SELECT id, spz, ridic, datum, km, zdroj, mnozstvi, cena, procenta_od, procenta_do, teplota FROM zaznamy ORDER BY datum DESC',
+            conn,
+        )
     return df
 
 
 def get_zaznamy_servis():
-    conn = get_connection()
-    df = pd.read_sql_query(
-        'SELECT id, spz, ridic, datum, km, kategorie, popis, cena FROM servis ORDER BY datum DESC',
-        conn,
-    )
-    conn.close()
+    with get_connection() as conn:
+        df = pd.read_sql_query(
+            'SELECT id, spz, ridic, datum, km, kategorie, popis, cena FROM servis ORDER BY datum DESC',
+            conn,
+        )
     return df
 
 
 def get_zavady():
-    conn = get_connection()
-    df = pd.read_sql_query(
-        'SELECT id, spz, ridic, datum, popis, stav FROM zavady ORDER BY datum DESC',
-        conn,
-    )
-    conn.close()
+    with get_connection() as conn:
+        df = pd.read_sql_query(
+            'SELECT id, spz, ridic, datum, popis, stav FROM zavady ORDER BY datum DESC',
+            conn,
+        )
     return df
 
 
 def get_ridici():
-    conn = get_connection()
-    df = pd.read_sql_query('SELECT id, jmeno, telefon, ridicak_do FROM ridici ORDER BY jmeno ASC', conn)
-    conn.close()
+    with get_connection() as conn:
+        df = pd.read_sql_query('SELECT id, jmeno, telefon, ridicak_do FROM ridici ORDER BY jmeno ASC', conn)
     df = df.fillna('Neuveden')
     return df
 
 
 def pridat_ridice(jmeno, telefon, ridicak_do):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT OR REPLACE INTO ridici (jmeno, telefon, ridicak_do) VALUES (?, ?, ?)",
-        (jmeno, telefon, str(ridicak_do)),
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO ridici (jmeno, telefon, ridicak_do) VALUES (?, ?, ?)",
+            (jmeno, telefon, str(ridicak_do)),
+        )
+        conn.commit()
 
 
 def smazat_ridice(ridic_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM ridici WHERE id = ?', (ridic_id,))
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM ridici WHERE id = ?', (ridic_id,))
+        conn.commit()
 
 
 def pridat_zavadu(spz, ridic, popis):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO zavady (spz, ridic, popis, stav) VALUES (?, ?, ?, 'Nahlášeno')",
-        (spz, ridic, popis),
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO zavady (spz, ridic, popis, stav) VALUES (?, ?, ?, 'Nahlášeno')",
+            (spz, ridic, popis),
+        )
+        conn.commit()
 
 
 def smazat_zavadu(zavada_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM zavady WHERE id = ?', (zavada_id,))
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM zavady WHERE id = ?', (zavada_id,))
+        conn.commit()
 
 
 def pridat_zaznam_paliva(spz, ridic, km, zdroj, mnozstvi, cena, p_od=0, p_do=100, teplota=0):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-            INSERT INTO zaznamy (spz, ridic, datum, km, zdroj, mnozstvi, cena, procenta_od, procenta_do, teplota)
-            VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (spz, ridic, km, zdroj, mnozstvi, cena, p_od, p_do, teplota),
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+                INSERT INTO zaznamy (spz, ridic, datum, km, zdroj, mnozstvi, cena, procenta_od, procenta_do, teplota)
+                VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (spz, ridic, km, zdroj, mnozstvi, cena, p_od, p_do, teplota),
+        )
+        conn.commit()
 
 
 def smazat_zaznam_paliva(zaznam_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM zaznamy WHERE id = ?', (zaznam_id,))
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM zaznamy WHERE id = ?', (zaznam_id,))
+        conn.commit()
 
 
 def smazat_servisni_zaznam(servis_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM servis WHERE id = ?', (servis_id,))
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM servis WHERE id = ?', (servis_id,))
+        conn.commit()
 
 
 def pridat_auto(
     spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin
 ):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-            INSERT INTO auta (spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin, olej_interval)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 10000)
-        """,
-        (
-            spz,
-            nazev,
-            typ_pohonu,
-            str(stk_do),
-            str(dz_do),
-            str(pojisteni_do),
-            pneu_rozmer,
-            staly_ridic,
-            vin,
-        ),
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+                INSERT INTO auta (spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin, olej_interval)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 10000)
+            """,
+            (
+                spz,
+                nazev,
+                typ_pohonu,
+                str(stk_do),
+                str(dz_do),
+                str(pojisteni_do),
+                pneu_rozmer,
+                staly_ridic,
+                vin,
+            ),
+        )
+        conn.commit()
 
 
 def upravit_auto(
     spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin
 ):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-            UPDATE auta 
-            SET nazev = ?, typ_pohonu = ?, stk_do = ?, dz_do = ?, pojisteni_do = ?, pneu_rozmer = ?, staly_ridic = ?, vin = ?, olej_interval = 10000
-            WHERE spz = ?
-        """,
-        (
-            nazev,
-            typ_pohonu,
-            str(stk_do),
-            str(dz_do),
-            str(pojisteni_do),
-            pneu_rozmer,
-            staly_ridic,
-            vin,
-            spz,
-        ),
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+                UPDATE auta 
+                SET nazev = ?, typ_pohonu = ?, stk_do = ?, dz_do = ?, pojisteni_do = ?, pneu_rozmer = ?, staly_ridic = ?, vin = ?, olej_interval = 10000
+                WHERE spz = ?
+            """,
+            (
+                nazev,
+                typ_pohonu,
+                str(stk_do),
+                str(dz_do),
+                str(pojisteni_do),
+                pneu_rozmer,
+                staly_ridic,
+                vin,
+                spz,
+            ),
+        )
+        conn.commit()
 
 
 def smazat_auto(spz):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM auta WHERE spz = ?', (spz,))
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM auta WHERE spz = ?', (spz,))
+        conn.commit()
 
 
 def pridat_servisni_zaznam(spz, km, kategorie, popis, cena, ridic):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-            INSERT INTO servis (spz, km, kategorie, popis, cena, ridic)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (spz, km, kategorie, popis, cena, ridic),
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+                INSERT INTO servis (spz, km, kategorie, popis, cena, ridic)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (spz, km, kategorie, popis, cena, ridic),
+        )
+        conn.commit()
 
 
 def generuj_qr_kod(url_adresa):
@@ -370,13 +358,12 @@ def render_styled_table(df):
 
 
 def ziskej_upozorneni():
-    conn = get_connection()
-    auta_df = pd.read_sql_query("SELECT spz, nazev, stk_do, dz_do, pojisteni_do, typ_pohonu FROM auta", conn)
-    try:
-        ridici_df = pd.read_sql_query("SELECT jmeno, ridicak_do FROM ridici", conn)
-    except Exception:
-        ridici_df = pd.DataFrame(columns=['jmeno', 'ridicak_do'])
-    conn.close()
+    with get_connection() as conn:
+        auta_df = pd.read_sql_query("SELECT spz, nazev, stk_do, dz_do, pojisteni_do, typ_pohonu FROM auta", conn)
+        try:
+            ridici_df = pd.read_sql_query("SELECT jmeno, ridicak_do FROM ridici", conn)
+        except Exception:
+            ridici_df = pd.DataFrame(columns=['jmeno', 'ridicak_do'])
     
     upozorneni_stk = []
     upozorneni_dz = []
@@ -421,21 +408,20 @@ def ziskej_upozorneni():
             
         pohon_raw = str(auto['typ_pohonu']).upper()
         if not any(x in pohon_raw for x in ['ELEKTŘINA', 'ELEKTRE', 'EV', 'BAT']):
-            conn_temp = get_connection()
-            max_km_query = """
-                SELECT MAX(km) as max_km FROM (
-                    SELECT km FROM zaznamy WHERE spz=?
-                    UNION ALL
-                    SELECT km FROM servis WHERE spz=?
-                ) t
-            """
-            max_km_val = pd.read_sql_query(max_km_query, conn_temp, params=(spz, spz)).iloc[0]['max_km']
-            aktualni_km = int(max_km_val) if pd.notna(max_km_val) and max_km_val is not None else 0
-            
-            posledni_olej_query = "SELECT MAX(km) as max_km FROM servis WHERE spz=? AND kategorie='Výměna oleje'"
-            olej_km_val = pd.read_sql_query(posledni_olej_query, conn_temp, params=(spz,)).iloc[0]['max_km']
-            posledni_olej_km = int(olej_km_val) if pd.notna(olej_km_val) and olej_km_val is not None else None
-            conn_temp.close()
+            with get_connection() as conn_temp:
+                max_km_query = """
+                    SELECT MAX(km) as max_km FROM (
+                        SELECT km FROM zaznamy WHERE spz=?
+                        UNION ALL
+                        SELECT km FROM servis WHERE spz=?
+                    ) t
+                """
+                max_km_val = pd.read_sql_query(max_km_query, conn_temp, params=(spz, spz)).iloc[0]['max_km']
+                aktualni_km = int(max_km_val) if pd.notna(max_km_val) and max_km_val is not None else 0
+                
+                posledni_olej_query = "SELECT MAX(km) as max_km FROM servis WHERE spz=? AND kategorie='Výměna oleje'"
+                olej_km_val = pd.read_sql_query(posledni_olej_query, conn_temp, params=(spz,)).iloc[0]['max_km']
+                posledni_olej_km = int(olej_km_val) if pd.notna(olej_km_val) and olej_km_val is not None else None
             
             if posledni_olej_km is not None:
                 zbyva_km = (posledni_olej_km + 10000) - aktualni_km
@@ -465,7 +451,7 @@ def ziskej_upozorneni():
 init_db()
 
 st.set_page_config(
-    page_title='Správa flotily - RHJ Gastro [v4.1.1]', page_icon='🚀', layout='wide'
+    page_title='Správa flotily - RHJ Gastro [v4.1.3]', page_icon='🚀', layout='wide'
 )
 
 if 'active_tab' not in st.session_state:
@@ -724,9 +710,8 @@ if st.session_state['simulovat_ridice']:
 def zisti_zda_je_ev(spz):
     if not spz:
         return False
-    conn = get_connection()
-    res = pd.read_sql_query("SELECT typ_pohonu FROM auta WHERE spz = ?", conn, params=(spz,))
-    conn.close()
+    with get_connection() as conn:
+        res = pd.read_sql_query("SELECT typ_pohonu FROM auta WHERE spz = ?", conn, params=(spz,))
     if res.empty:
         return False
     pohon = str(res.iloc[0]['typ_pohonu']).upper()
@@ -791,12 +776,11 @@ if qr_ridic != "Neznámý řidič" or qr_spz != "Neznámá SPZ" or st.session_st
                 d_mnozstvi = round((missing_percentage / 100.0) * total_battery_capacity, 2)
                 d_teplota = 0.0
                 
-                conn_c = get_connection()
-                cur_c = conn_c.cursor()
-                cur_c.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'")
-                row_c = cur_c.fetchone()
+                with get_connection() as conn_c:
+                    cur_c = conn_c.cursor()
+                    cur_c.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'")
+                    row_c = cur_c.fetchone()
                 cena_kwh_val = float(row_c[0]) if row_c else 6.50
-                conn_c.close()
                 
                 d_cena = round(d_mnozstvi * cena_kwh_val, 2)
             else:
@@ -844,13 +828,15 @@ if not st.session_state['admin_autentizovan']:
     with col_l2:
         zadane_heslo = st.text_input("Heslo", type="password", key="admin_pass_input")
         if st.button("Přihlásit se do administrace"):
-            aktualni_admin_heslo = ziskej_admin_heslo()
-            if zadane_heslo == aktualni_admin_heslo:
+            zadany_hash = hash_password(zadane_heslo)
+            aktualni_admin_hash = ziskej_admin_heslo_hash()
+            
+            if zadany_hash == aktualni_admin_hash:
                 st.session_state['admin_autentizovan'] = True
                 st.session_state['supervizor_autentizovan'] = False
                 st.success("Přístup povolen (Admin)!")
                 st.rerun()
-            elif zadane_heslo == SUPERVISOR_PASSWORD:
+            elif zadany_hash == SUPERVISOR_PASSWORD_HASH:
                 st.session_state['admin_autentizovan'] = True
                 st.session_state['supervizor_autentizovan'] = True
                 st.success("Přístup povolen (Master Supervizor)!")
@@ -868,7 +854,7 @@ st.markdown(
             </div>
             <div>
                 <h1 style="color: #5b4b8a !important; margin: 0; font-size: 32px !important; font-weight: 900;">RHJ Gastro – Správa vozového parku</h1>
-                <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rozvoz hotových jídel — Fleet Management & Operations System (v4.1.1)</p>
+                <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rozvoz hotových jídel — Fleet Management & Operations System (v4.1.3)</p>
                 <p style="color: #666 !important; margin: 4px 0 0 0; font-size: 12px !important;">&copy; 2026 RHJ Gastro. All rights reserved. Všechna práva vyhrazena.</p>
             </div>
         </div>
@@ -935,33 +921,38 @@ if akt_sekce == '🏢 Vozidla':
         with st.form('add_car_form'):
             c1, c2 = st.columns(2)
             with c1:
-                new_spz = st.text_input('SPZ')
+                new_spz = st.text_input('SPZ (např. 1A2 3456 nebo 5Z49372)')
                 new_nazev = st.text_input('Model (např. Maxus eDeliver 3, VW Caddy EV...)')
                 new_vin = st.text_input('VIN')
                 new_stk = st.text_input('STK do (YYYY-MM-DD)', value='2027-01-01')
                 new_dz = st.text_input('DZ do (YYYY-MM-DD)', value='2027-01-01')
             with c2:
-                new_pohonu = st.selectbox('Pohon', ['EV', 'firemní', 'LPG', 'Natural'])
+                new_pohonu = st.selectbox('Pohon', ['EV', 'Diesel', 'firemní', 'LPG', 'Natural'])
                 new_pojisteni = st.text_input('Pojištění do (YYYY-MM-DD)', value='2027-01-01')
                 new_pneu = st.text_input('Pneu rozměr', value='215/70 R15C')
                 new_ridic = st.text_input('Stálý řidič')
 
             if st.form_submit_button('Uložit vozidlo'):
-                if new_spz:
-                    pridat_auto(
-                        new_spz,
-                        new_nazev,
-                        new_pohonu,
-                        new_stk,
-                        new_dz,
-                        new_pojisteni,
-                        new_pneu,
-                        new_ridic,
-                        new_vin,
-                    )
-                    st.success('Vozidlo úspěšně přidáno do databáze!')
-                    st.session_state['car_action'] = 'view'
-                    st.rerun()
+                cleaned_spz = new_spz.replace(" ", "").upper()
+                if cleaned_spz:
+                    df_check = get_vsechna_auta()
+                    if not df_check[df_check['spz'] == cleaned_spz].empty:
+                        st.error(f"Vozidlo se SPZ {cleaned_spz} již v databázi existuje!")
+                    else:
+                        pridat_auto(
+                            cleaned_spz,
+                            new_nazev,
+                            new_pohonu,
+                            new_stk,
+                            new_dz,
+                            new_pojisteni,
+                            new_pneu,
+                            new_ridic,
+                            new_vin,
+                        )
+                        st.success('Vozidlo úspěšně přidáno do databáze!')
+                        st.session_state['car_action'] = 'view'
+                        st.rerun()
                 else:
                     st.error('Zadejte prosím SPZ vozidla.')
 
@@ -979,10 +970,9 @@ if akt_sekce == '🏢 Vozidla':
         if not car_row.empty:
             row = car_row.iloc[0]
             
-            conn_sum = get_connection()
-            df_s_servis = pd.read_sql_query("SELECT cena FROM servis WHERE spz=?", conn_sum, params=(spz_to_edit,))
-            df_s_tank = pd.read_sql_query("SELECT cena FROM zaznamy WHERE spz=?", conn_sum, params=(spz_to_edit,))
-            conn_sum.close()
+            with get_connection() as conn_sum:
+                df_s_servis = pd.read_sql_query("SELECT cena FROM servis WHERE spz=?", conn_sum, params=(spz_to_edit,))
+                df_s_tank = pd.read_sql_query("SELECT cena FROM zaznamy WHERE spz=?", conn_sum, params=(spz_to_edit,))
             
             celkem_servis = df_s_servis['cena'].sum() if not df_s_servis.empty else 0.0
             celkem_palivo = df_s_tank['cena'].sum() if not df_s_tank.empty else 0.0
@@ -1011,7 +1001,7 @@ if akt_sekce == '🏢 Vozidla':
             with st.form(f'edit_car_form_{spz_to_edit}'):
                 e_nazev = st.text_input('Model', value=row['nazev'])
                 e_vin = st.text_input('VIN', value=row['vin'])
-                pohony_opts = ['EV', 'firemní', 'LPG', 'Natural']
+                pohony_opts = ['EV', 'Diesel', 'firemní', 'LPG', 'Natural']
                 pohon_idx = (
                     pohony_opts.index(row['typ_pohonu'])
                     if row['typ_pohonu'] in pohony_opts
@@ -1063,11 +1053,10 @@ if akt_sekce == '🏢 Vozidla':
             st.markdown("---")
             st.markdown(f"### 📋 Kompletní historie pro: {spz_to_edit}")
             
-            conn_hist = get_connection()
-            df_h_servis = pd.read_sql_query("SELECT id, datum, km, kategorie, popis, cena, ridic FROM servis WHERE spz=? ORDER BY datum DESC", conn_hist, params=(spz_to_edit,))
-            df_h_tank = pd.read_sql_query("SELECT id, datum, km, zdroj, mnozstvi, cena, procenta_od, procenta_do, teplota, ridic FROM zaznamy WHERE spz=? ORDER BY datum DESC", conn_hist, params=(spz_to_edit,))
-            df_h_zavady = pd.read_sql_query("SELECT id, datum, popis, stav FROM zavady WHERE spz=? ORDER BY datum DESC", conn_hist, params=(spz_to_edit,))
-            conn_hist.close()
+            with get_connection() as conn_hist:
+                df_h_servis = pd.read_sql_query("SELECT id, datum, km, kategorie, popis, cena, ridic FROM servis WHERE spz=? ORDER BY datum DESC", conn_hist, params=(spz_to_edit,))
+                df_h_tank = pd.read_sql_query("SELECT id, datum, km, zdroj, mnozstvi, cena, procenta_od, procenta_do, teplota, ridic FROM zaznamy WHERE spz=? ORDER BY datum DESC", conn_hist, params=(spz_to_edit,))
+                df_h_zavady = pd.read_sql_query("SELECT id, datum, popis, stav FROM zavady WHERE spz=? ORDER BY datum DESC", conn_hist, params=(spz_to_edit,))
 
             t_s1, t_s2, t_s3 = st.tabs(["🛠️ Servisní úkony", "⛽ Tankování / Nabíjení", "⚠️ Hlášené závady"])
             
@@ -1122,9 +1111,8 @@ if akt_sekce == '🏢 Vozidla':
         df_auta = get_vsechna_auta()
 
         if not df_auta.empty:
-            conn_z = get_connection()
-            df_vsechny_zavady = pd.read_sql_query("SELECT spz, popis FROM zavady", conn_z)
-            conn_z.close()
+            with get_connection() as conn_z:
+                df_vsechny_zavady = pd.read_sql_query("SELECT spz, popis FROM zavady", conn_z)
 
             dnes = datetime.now().date()
             cols = st.columns(2)
@@ -1205,19 +1193,19 @@ if akt_sekce == '🏢 Vozidla':
 
 elif akt_sekce == '⚙️ Nastavení':
     st.header('⚙️ Nastavení aplikace & Notifikace')
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'")
-    cena_kwh = cursor.fetchone()[0]
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'")
+        cena_kwh = cursor.fetchone()[0]
 
     with st.form('nastaveni_form'):
         nova_cena = st.number_input('Cena elektřiny za kWh (Kč)', value=float(cena_kwh), format='%.2f')
         
         st.markdown("---")
         st.markdown("### 🔑 Změna administrátorského hesla (pro šéfovou)")
+        staré_heslo = st.text_input("Původní administrátorské heslo", type="password")
         nove_admin_heslo = st.text_input("Nové administrátorské heslo", type="password")
+        potvrzeni_hesla = st.text_input("Potvrzení nového administrátorského hesla", type="password")
         
         st.markdown("---")
         st.markdown("### 🔔 Notifikační kanály (WhatsApp & Gmail)")
@@ -1225,15 +1213,26 @@ elif akt_sekce == '⚙️ Nastavení':
         notif_gmail = st.text_input("Gmail / E-mail pro zasílání měsíčních reportů a varování", value="sefova@rhjgastro.cz")
         
         if st.form_submit_button('Uložit nastavení'):
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute('UPDATE nastaveni SET hodnota = ? WHERE klic = ?', (str(nova_cena), 'cena_kwh'))
-            if nove_admin_heslo:
-                cursor.execute('INSERT OR REPLACE INTO nastaveni (klic, hodnota) VALUES (?, ?)', ('admin_heslo', nove_admin_heslo))
-            conn.commit()
-            cursor.close()
-            conn.close()
-            st.success('Nastavení, administrátorské heslo a notifikační kanály úspěšně uloženy!')
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE nastaveni SET hodnota = ? WHERE klic = ?', (str(nova_cena), 'cena_kwh'))
+                
+                if nove_admin_heslo:
+                    if nove_admin_heslo != potvrzeni_hesla:
+                        st.error("Nové heslo a potvrzení se neshodují!")
+                    else:
+                        starý_hash = hash_password(staré_heslo)
+                        aktualni_hash = ziskej_admin_heslo_hash()
+                        if starý_hash == aktualni_hash or st.session_state.get('supervizor_autentizovan', False):
+                            novy_hash = hash_password(nove_admin_heslo)
+                            cursor.execute('INSERT OR REPLACE INTO nastaveni (klic, hodnota) VALUES (?, ?)', ('admin_heslo_hash', novy_hash))
+                            conn.commit()
+                            st.success('Nastavení a administrátorské heslo úspěšně aktualizovány!')
+                        else:
+                            st.error("Původní administrátorské heslo je nesprávné!")
+                else:
+                    conn.commit()
+                    st.success('Nastavení a notifikační kanály úspěšně uloženy!')
 
 elif akt_sekce == '⛽ Tankování':
     st.header('⛽ Evidence tankování a nabíjení EV')
@@ -1262,12 +1261,11 @@ elif akt_sekce == '⛽ Tankování':
                 t_mnozstvi = round((missing_percentage / 100.0) * total_battery_capacity, 2)
                 t_teplota = 0.0
                 
-                conn_c = get_connection()
-                cur_c = conn_c.cursor()
-                cur_c.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'")
-                row_c = cur_c.fetchone()
+                with get_connection() as conn_c:
+                    cur_c = conn_c.cursor()
+                    cur_c.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'")
+                    row_c = cur_c.fetchone()
                 cena_kwh_val = float(row_c[0]) if row_c else 6.50
-                conn_c.close()
                 
                 t_cena = round(t_mnozstvi * cena_kwh_val, 2)
             else:
@@ -1277,10 +1275,17 @@ elif akt_sekce == '⛽ Tankování':
                 t_p_od, t_p_do, t_teplota = 0.0, 100.0, 0.0
             
             if st.form_submit_button('Přidat záznam'):
-                pridat_zaznam_paliva(t_spz, t_ridic, t_km, t_zdroj, t_mnozstvi, t_cena, t_p_od, t_p_do, t_teplota)
-                st.success('Záznam přídán!')
-                st.session_state['tank_action'] = 'view'
-                st.rerun()
+                with get_connection() as conn_v:
+                    last_km_res = pd.read_sql_query("SELECT MAX(km) as max_km FROM zaznamy WHERE spz=?", conn_v, params=(t_spz,))
+                last_km = last_km_res.iloc[0]['max_km'] if not last_km_res.empty and pd.notna(last_km_res.iloc[0]['max_km']) else 0
+                
+                if last_km > 0 and t_km < last_km:
+                    st.error(f"Pozor: Zadávaný stav tachometru ({t_km} km) je nižší než poslední zaznamenaný stav ({last_km} km)!")
+                else:
+                    pridat_zaznam_paliva(t_spz, t_ridic, t_km, t_zdroj, t_mnozstvi, t_cena, t_p_od, t_p_do, t_teplota)
+                    st.success('Záznam přídán!')
+                    st.session_state['tank_action'] = 'view'
+                    st.rerun()
     else:
         if st.button('➕ Přidat záznam tankování / nabití'):
             st.session_state['tank_action'] = 'add'
@@ -1560,47 +1565,44 @@ elif akt_sekce == '📊 Statistiky':
 
 elif akt_sekce == '📱 QR Kód':
     st.header('📱 Generování QR kódů pro stínítka vozidel')
-    st.markdown("Vyberte řidiče (vozidlo se přiřadí automaticky) a vygenerujte specifický QR kód pro sluneční clonu.")
+    st.markdown("Vyberte konkrétní vozidlo a vygenerujte specifický QR kód pro sluneční clonu.")
     
-    local_ip = "127.0.0.1"
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(('10.255.255.255', 1))
-        local_ip = s.getsockname()[0]
-        s.close()
-    except Exception:
-        pass
-    
-    zakladni_url = f"http://{local_ip}:8501"
+    # Použití ostré Streamlit Cloud URL namísto lokální IP z notebooku
+    zakladni_url = "https://spr-vaflotily-ys5pzghvkp3zoyxgebryvv.streamlit.app"
     
     df_auta_qr = get_vsechna_auta()
     if not df_auta_qr.empty:
         options_map = {}
         for _, row_item in df_auta_qr.iterrows():
-            r_jmeno = row_item['staly_ridic'] if row_item['staly_ridic'] and row_item['staly_ridic'] != 'Neuveden' else 'Neznámý řidič'
             s_spz = row_item['spz']
-            display_label = f"{r_jmeno} (SPZ: {s_spz})"
-            options_map[display_label] = (s_spz, r_jmeno if r_jmeno != 'Neznámý řidič' else '')
+            nazev_auta = row_item['nazev']
+            r_jmeno = row_item['staly_ridic'] if row_item['staly_ridic'] and row_item['staly_ridic'] != 'Neuveden' else ''
             
-        selected_label = st.selectbox("Vyberte řidiče (vozidlo se přiřadí automaticky):", list(options_map.keys()))
+            display_label = f"{s_spz} – {nazev_auta} (Řidič: {r_jmeno if r_jmeno else 'Neuveden'})"
+            options_map[display_label] = (s_spz, r_jmeno)
+            
+        selected_label = st.selectbox("Vyberte vozidlo pro generování QR kódu:", list(options_map.keys()))
         qr_spz_vyber, staly_ridic_auta = options_map[selected_label]
         
-        cilova_url = f"{zakladni_url}/?spz={qr_spz_vyber}&ridic={staly_ridic_auta}"
+        # URL encoding parametrů pro bezproblémové načtení v mobilu i s diakritikou/mezerami
+        enc_spz = quote(str(qr_spz_vyber))
+        enc_ridic = quote(str(staly_ridic_auta))
+        cilova_url = f"{zakladni_url}/?spz={enc_spz}&ridic={enc_ridic}"
         
         st.markdown(f"**Cílová adresa pro vůz {qr_spz_vyber}:**")
         st.code(cilova_url)
         
         col_qr1, col_qr2 = st.columns([1, 2])
         with col_qr1:
-            st.image(generuj_qr_kod(cilova_url), caption=f"Řidič: {staly_ridic_auta or 'Neznámý'} | SPZ: {qr_spz_vyber}", width=250)
+            st.image(generuj_qr_kod(cilova_url), caption=f"SPZ: {qr_spz_vyber} | Řidič: {staly_ridic_auta or 'Neuveden'}", width=250)
         with col_qr2:
             zobrazeny_ridic = staly_ridic_auta if staly_ridic_auta else 'Neuveden'
             st.markdown(f"""
                 ### 📌 Instrukce pro tisk:
-                1. Vybraný řidič: **<span style="font-size: 1.2em; font-weight: bold;">{zobrazeny_ridic}</span>** (Vozidlo: **{qr_spz_vyber}**)
+                1. Vybrané vozidlo: **<span style="font-size: 1.2em; font-weight: bold;">{qr_spz_vyber}</span>** (Stálý řidič: {zobrazeny_ridic})
                 2. QR kód si uložte nebo vytiskněte.
-                3. Zalaminujte ho a nalepte na sluneční clonu řidiče.
-                4. Kurýr po naskenování rovnou hlásí závady nebo tankování pro toto konkrétní auto bez zdržování!
+                3. Zalaminujte ho a nalepte na sluneční clonu vozidla.
+                4. Kurýr po naskenování rovnou hlásí závady nebo tankování pro tento konkrétní vůz bez zdržování!
             """, unsafe_allow_html=True)
     else:
         st.info("V databázi nejsou žádná vozidla pro generování QR kódů.")
