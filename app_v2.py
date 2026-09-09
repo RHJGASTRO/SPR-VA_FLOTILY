@@ -1,14 +1,23 @@
-# VERZE 4.1.2 - Správa flotily - RHJ Gastro (Full Master Release - Integrated Fleet)
-# ==============================================================================
+# ==========================================
+# VERZE 6.2.3 - Správa flotily - RHJ Gastro
+# ==========================================
+
+import asyncio
+import base64
 import io
 import os
-import sqlite3
 import socket
+import sqlite3
+import sys
 from datetime import datetime, timedelta
 import pandas as pd
 import plotly.express as px
 import qrcode
 import streamlit as st
+
+# Oprava pro asyncio na Windows
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 DB_NAME = 'flotila.db'
 SUPERVISOR_PASSWORD = 'supervisor789'
@@ -36,31 +45,20 @@ def init_db():
             olej_interval INTEGER DEFAULT 10000
         )
     """)
-    
+    try:
+        cursor.execute('SELECT vin FROM auta LIMIT 1')
+    except sqlite3.OperationalError:
+        cursor.execute('ALTER TABLE auta ADD COLUMN vin TEXT')
+        
     try:
         cursor.execute("SELECT pojisteni_do FROM auta LIMIT 1")
     except sqlite3.OperationalError:
         cursor.execute("ALTER TABLE auta ADD COLUMN pojisteni_do TEXT")
 
-    cursor.execute("SELECT COUNT(*) FROM auta")
-    if cursor.fetchone()[0] == 0:
-        vychozi_auta = [
-            ("2M88435", "Fiat Doblo", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "Kolářová Zuzana", "ZFA22300005463005", 10000),
-            ("4B33954", "Fiat Doblo", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "Švadlenková Denisa", "ZFA22300005443286", 10000),
-            ("5E81583", "Volkswagen Caddy", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/65 R15 (95T XL)", "Lokaj Martin", "WV1ZZZ2KZ9X101365", 10000),
-            ("5E94630", "Volkswagen Caddy", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/65 R15 (95T XL)", "NÁHRADNÍ", "WV1ZZZ2KZAX049128", 10000),
-            ("5Z49372", "Citroen Jumpy", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "215/60 R16C 103/101T (103/101)", "Mukařovský Martin", "VF7XUAH8FZ013373", 10000),
-            ("6E14928", "Fiat Doblo", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "Doležal Martin", "ZFA22300005374486", 10000),
-            ("6E24392", "Fiat Doblo LPG - náhradní", "Natural", "2027-01-01", "2027-01-01", "2027-01-01", "175/70 R14 (88T XL)", "NÁHRADNÍ", "ZFA22300005559273", 10000),
-            ("6E74807", "Ford Transit", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/70 R15C (104/102R)", "Balog Marcel", "WF0SXXTTFS8R16015", 10000),
-            ("6E85382", "Peugeot Partner", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "195/65 R15 (91H)", "Sejpková Anna Marie", "VF3XT9HMOCZ005574", 10000),
-            ("6E94181", "IVECO", "Nafta", "2027-01-01", "2027-01-01", "2027-01-01", "215/75 R17.5 (126/124M)", "ODPADY", "ZCFA80F0002004883", 10000),
-        ]
-        for auto in vychozi_auta:
-            cursor.execute("""
-                INSERT OR IGNORE INTO auta (spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin, olej_interval)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, auto)
+    try:
+        cursor.execute("SELECT olej_interval FROM auta LIMIT 1")
+    except sqlite3.OperationalError:
+        cursor.execute("ALTER TABLE auta ADD COLUMN olej_interval INTEGER DEFAULT 10000")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS zaznamy (
@@ -130,6 +128,87 @@ def init_db():
     cursor.execute(
         "INSERT OR IGNORE INTO nastaveni (klic, hodnota) VALUES ('admin_heslo', 'admin123')"
     )
+
+    pocatecni_auta = [
+        ('2M88435', 'Fiat Doblo', 'Natural', '2027-01-01', '2027-01-01', '2027-01-01', '175/70 R14 | 88T XL | 2.3 / 2.5 bar (Nákladní / Cargo)', 'Kolářová Zuzana', 'ZFA22300005463005', 10000),
+        ('4B33954', 'Fiat Doblo', 'Natural', '2027-01-01', '2027-01-01', '2027-01-01', '175/70 R14 | 88T XL | 2.3 / 2.5 bar (Nákladní / Cargo)', 'Švadlenková Denisa', 'ZFA22300005443286', 10000),
+        ('5E81583', 'Volkswagen Caddy', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 91T / 95T XL | 2.4 / 2.8 bar (Zátěžová dodávka)', 'Lokaj Martin', 'WV1ZZZ2KZ9X101365', 10000),
+        ('5E94630', 'Volkswagen Caddy', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 91T / 95T XL | 2.4 / 2.8 bar (Zátěžová dodávka)', 'NÁHRADNÍ', 'WV1ZZZ2KZAX049128', 10000),
+        ('5Z49372', 'Citroen Jumpy', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/60 R16C | 106/104T | 2.5 / 3.0 bar (Zátěžové C pneumatiky)', 'Mukařovský Martin', 'VF7XUAHZ8FZ013373', 10000),
+        ('6E14928', 'Fiat Doblo', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 88T / 92T XL | 2.3 / 2.6 bar (Nákladní / Cargo)', 'Doležal Martin', 'ZFA22300005374486', 10000),
+        ('6E24392', 'Fiat Doblo', 'LPG', '2027-01-01', '2027-01-01', '2027-01-01', '175/70 R14 | 88T XL | 2.3 / 2.5 bar (V tabulce stav: prodáno)', 'NÁHRADNÍ', 'ZFA22300005559273', 10000),
+        ('6E74807', 'Ford Transit', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/65 R16C | 109/107R | 3.5 / 4.5 bar (Zátěžové C pneumatiky)', 'Balog Marcel', 'WF0SXXTTFS8R16015', 10000),
+        ('6E28016', 'Ford Transit', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/65 R16C | 109/107R | 3.5 / 4.5 bar (V tabulce stav: prodáno)', 'NÁHRADNÍ', 'WF0VXXBDFV4A52316', 10000),
+        ('6E85382', 'Peugeot Partner', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 91T / 95T XL | 2.4 / 2.8 bar (Nákladní / Cargo)', 'NÁHRADNÍ', 'VF3XT9HM0CZ005574', 10000),
+        ('6E94181', 'IVECO', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/75 R16C | 107/105R | 4.5 / 4.5 bar (Zátěžové C pneumatiky)', 'ODPADY', 'ZCFA80F0002004883', 10000),
+        ('6E94186', 'Peugeot Expert', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/60 R16C | 106/104T | 2.5 / 3.0 bar (Zátěžové C pneumatiky)', 'Anna Marie Sejpková', 'VF3XURHGH9Z033445', 10000),
+        ('6T00251', 'Renault Thalia', 'Natural', '2027-01-01', '2027-01-01', '2027-01-01', '175/65 R14 | 82T | 2.1 / 2.0 bar (Osobní)', 'NÁHRADNÍ', 'VF1LBVU0540699987', 10000),
+        ('7E22709', 'Volkswagen Transporter', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '205/65 R16C | 107/105T | 3.0 / 3.4 bar (Zátěžové C (T5))', 'NÁHRADNÍ', 'WV1ZZZ7HZ5H039974', 10000),
+        ('7E36745', 'Fiat Doblo', 'Natural', '2027-01-01', '2027-01-01', '2027-01-01', '175/70 R14 | 88T XL | 2.3 / 2.5 bar (Nákladní / Cargo)', 'Slanařová Veronika', 'ZFA22300005712863', 10000),
+        ('7P12357', 'Fiat Ducato', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/70 R15C | 109/107S | 4.5 / 5.0 bar (Zátěžové C pneumatiky)', 'NÁHRADNÍ', 'ZFA25000002G05606', 10000),
+        ('7S71963', 'Volkswagen Caddy', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 91T / 95T XL | 2.4 / 2.8 bar (Zátěžová dodávka)', 'Flekač Pavel', 'WV1ZZZ2KZ9X025434', 10000),
+        ('EL141CR', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Vohnout Oldřich', 'LSH14C4C0PA089247', 10000),
+        ('EL142CR', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Flekač Petr', 'LSH14C4C3NA068373', 10000),
+        ('EL328CP', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Šinkora Vladimír', 'LSH14C4C1NA068369', 10000),
+        ('EL330CF', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Trpkošová Iveta', 'LSH14C4C0PA089281', 10000),
+        ('EL871EY', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Kučerová Marie', 'LSH14C4C7LA116101', 10000),
+        ('EL882EY', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Akrman Stanislav', 'LSH14C4C5LA080067', 10000),
+        ('EL952DF', 'Maxus SV3C', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Pozn.: SPZ uvedena 2x v Excelu)', 'Secká Zdenka', 'LSH14C4C0PA089216', 10000),
+        ('EL945HA', 'Volkswagen EDCN Caddy', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 95T XL | 2.6 / 2.9 bar (Elektro přestavba Caddy)', 'Fraňková Veronika', 'WV1ZZZ2KZLX057133', 10000),
+        ('EL952DF_2', 'Volkswagen EDCN Caddy', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 95T XL | 2.6 / 2.9 bar (Elektro přestavba Caddy)', 'NÁHRADNÍ', 'WV1ZZZ2KZLX039731', 10000)
+    ]
+
+    cursor.executemany(
+        """
+            INSERT OR REPLACE INTO auta (spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin, olej_interval)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        pocatecni_auta,
+    )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def obnovit_vychozi_auta():
+    conn = get_connection()
+    cursor = conn.cursor()
+    pocatecni_auta = [
+        ('2M88435', 'Fiat Doblo', 'Natural', '2027-01-01', '2027-01-01', '2027-01-01', '175/70 R14 | 88T XL | 2.3 / 2.5 bar (Nákladní / Cargo)', 'Kolářová Zuzana', 'ZFA22300005463005', 10000),
+        ('4B33954', 'Fiat Doblo', 'Natural', '2027-01-01', '2027-01-01', '2027-01-01', '175/70 R14 | 88T XL | 2.3 / 2.5 bar (Nákladní / Cargo)', 'Švadlenková Denisa', 'ZFA22300005443286', 10000),
+        ('5E81583', 'Volkswagen Caddy', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 91T / 95T XL | 2.4 / 2.8 bar (Zátěžová dodávka)', 'Lokaj Martin', 'WV1ZZZ2KZ9X101365', 10000),
+        ('5E94630', 'Volkswagen Caddy', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 91T / 95T XL | 2.4 / 2.8 bar (Zátěžová dodávka)', 'NÁHRADNÍ', 'WV1ZZZ2KZAX049128', 10000),
+        ('5Z49372', 'Citroen Jumpy', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/60 R16C | 106/104T | 2.5 / 3.0 bar (Zátěžové C pneumatiky)', 'Mukařovský Martin', 'VF7XUAHZ8FZ013373', 10000),
+        ('6E14928', 'Fiat Doblo', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 88T / 92T XL | 2.3 / 2.6 bar (Nákladní / Cargo)', 'Doležal Martin', 'ZFA22300005374486', 10000),
+        ('6E24392', 'Fiat Doblo', 'LPG', '2027-01-01', '2027-01-01', '2027-01-01', '175/70 R14 | 88T XL | 2.3 / 2.5 bar (V tabulce stav: prodáno)', 'NÁHRADNÍ', 'ZFA22300005559273', 10000),
+        ('6E74807', 'Ford Transit', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/65 R16C | 109/107R | 3.5 / 4.5 bar (Zátěžové C pneumatiky)', 'Balog Marcel', 'WF0SXXTTFS8R16015', 10000),
+        ('6E28016', 'Ford Transit', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/65 R16C | 109/107R | 3.5 / 4.5 bar (V tabulce stav: prodáno)', 'NÁHRADNÍ', 'WF0VXXBDFV4A52316', 10000),
+        ('6E85382', 'Peugeot Partner', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 91T / 95T XL | 2.4 / 2.8 bar (Nákladní / Cargo)', 'NÁHRADNÍ', 'VF3XT9HM0CZ005574', 10000),
+        ('6E94181', 'IVECO', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/75 R16C | 107/105R | 4.5 / 4.5 bar (Zátěžové C pneumatiky)', 'ODPADY', 'ZCFA80F0002004883', 10000),
+        ('6E94186', 'Peugeot Expert', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/60 R16C | 106/104T | 2.5 / 3.0 bar (Zátěžové C pneumatiky)', 'Anna Marie Sejpková', 'VF3XURHGH9Z033445', 10000),
+        ('6T00251', 'Renault Thalia', 'Natural', '2027-01-01', '2027-01-01', '2027-01-01', '175/65 R14 | 82T | 2.1 / 2.0 bar (Osobní)', 'NÁHRADNÍ', 'VF1LBVU0540699987', 10000),
+        ('7E22709', 'Volkswagen Transporter', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '205/65 R16C | 107/105T | 3.0 / 3.4 bar (Zátěžové C (T5))', 'NÁHRADNÍ', 'WV1ZZZ7HZ5H039974', 10000),
+        ('7E36745', 'Fiat Doblo', 'Natural', '2027-01-01', '2027-01-01', '2027-01-01', '175/70 R14 | 88T XL | 2.3 / 2.5 bar (Nákladní / Cargo)', 'Slanařová Veronika', 'ZFA22300005712863', 10000),
+        ('7P12357', 'Fiat Ducato', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '215/70 R15C | 109/107S | 4.5 / 5.0 bar (Zátěžové C pneumatiky)', 'NÁHRADNÍ', 'ZFA25000002G05606', 10000),
+        ('7S71963', 'Volkswagen Caddy', 'Nafta', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 91T / 95T XL | 2.4 / 2.8 bar (Zátěžová dodávka)', 'Flekač Pavel', 'WV1ZZZ2KZ9X025434', 10000),
+        ('EL141CR', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Vohnout Oldřich', 'LSH14C4C0PA089247', 10000),
+        ('EL142CR', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Flekač Petr', 'LSH14C4C3NA068373', 10000),
+        ('EL328CP', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Šinkora Vladimír', 'LSH14C4C1NA068369', 10000),
+        ('EL330CF', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Trpkošová Iveta', 'LSH14C4C0PA089281', 10000),
+        ('EL871EY', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Kučerová Marie', 'LSH14C4C7LA116101', 10000),
+        ('EL882EY', 'Maxus E-Deliver 3', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Elektro (vyšší váha baterií))', 'Akrman Stanislav', 'LSH14C4C5LA080067', 10000),
+        ('EL952DF', 'Maxus SV3C', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '185/65 R15 | 92H XL | 2.8 / 3.0 bar (Pozn.: SPZ uvedena 2x v Excelu)', 'Secká Zdenka', 'LSH14C4C0PA089216', 10000),
+        ('EL945HA', 'Volkswagen EDCN Caddy', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 95T XL | 2.6 / 2.9 bar (Elektro přestavba Caddy)', 'Fraňková Veronika', 'WV1ZZZ2KZLX057133', 10000),
+        ('EL952DF_2', 'Volkswagen EDCN Caddy', 'Elektřina', '2027-01-01', '2027-01-01', '2027-01-01', '195/65 R15 | 95T XL | 2.6 / 2.9 bar (Elektro přestavba Caddy)', 'NÁHRADNÍ', 'WV1ZZZ2KZLX039731', 10000)
+    ]
+    cursor.executemany(
+        """
+            INSERT OR REPLACE INTO auta (spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin, olej_interval)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        pocatecni_auta,
+    )
     conn.commit()
     cursor.close()
     conn.close()
@@ -148,7 +227,7 @@ def ziskej_admin_heslo():
 def get_vsechna_auta():
     conn = get_connection()
     df = pd.read_sql_query(
-        'SELECT spz, nazev, typ_pohonu, staly_ridic, stk_do, dz_do, pojisteni_do, pneu_rozmer, vin, olej_interval FROM auta',
+        'SELECT spz, nazev, typ_pohonu, stk_do, dz_do, pojisteni_do, pneu_rozmer, staly_ridic, vin, olej_interval FROM auta ORDER BY spz ASC',
         conn,
     )
     conn.close()
@@ -465,7 +544,7 @@ def ziskej_upozorneni():
 init_db()
 
 st.set_page_config(
-    page_title='Správa flotily - RHJ Gastro [v4.1.1]', page_icon='🚀', layout='wide'
+    page_title='Správa flotily - RHJ Gastro [v6.2.3]', page_icon='🚀', layout='wide'
 )
 
 if 'active_tab' not in st.session_state:
@@ -687,7 +766,7 @@ CLEAN_CSS = """
         border-radius: 10px;
         padding: 15px;
         border: 1px solid #e2e8f0;
-        box-schema: 0 2px 8px rgba(0,0,0,0.05);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
         height: 100%;
     }
     
@@ -707,19 +786,19 @@ CLEAN_CSS = """
 """
 st.markdown(CLEAN_CSS, unsafe_allow_html=True)
 
-params = st.query_params
-qr_ridic = params.get("ridic", "Neznámý řidič")
-qr_spz = params.get("spz", "Neznámá SPZ")
+query_params = st.query_params
+qr_spz_param = query_params.get("spz", None)
+qr_ridic_param = query_params.get("ridic", "Neznámý řidič")
 
 if st.session_state['simulovat_ridice']:
     df_auta_sim = get_vsechna_auta()
     if not df_auta_sim.empty:
         prvni_auto = df_auta_sim.iloc[0]
-        qr_ridic = prvni_auto['staly_ridic'] if prvni_auto['staly_ridic'] != 'Neuveden' else 'Testovací řidič'
-        qr_spz = prvni_auto['spz']
+        qr_ridic_param = prvni_auto['staly_ridic'] if prvni_auto['staly_ridic'] != 'Neuveden' else 'Testovací řidič'
+        qr_spz_param = prvni_auto['spz']
     else:
-        qr_ridic = 'Testovací řidič'
-        qr_spz = '5Z49372'
+        qr_ridic_param = 'Testovací řidič'
+        qr_spz_param = '5Z49372'
 
 def zisti_zda_je_ev(spz):
     if not spz:
@@ -732,101 +811,138 @@ def zisti_zda_je_ev(spz):
     pohon = str(res.iloc[0]['typ_pohonu']).upper()
     return any(x in pohon for x in ['EV', 'ELEKTŘINA', 'ELEKTRE', 'BAT'])
 
-if qr_ridic != "Neznámý řidič" or qr_spz != "Neznámá SPZ" or st.session_state.get('simulovat_ridice', False):
+if qr_spz_param or st.session_state.get('simulovat_ridice', False):
     st.markdown(
         """
-        <div style="background-color: #eae5f5; padding: 20px; border-radius: 14px; margin-bottom: 20px; text-align: center; border: 1px solid #d1cce3;">
-            <h2 style="color: #5b4b8a !important; margin: 0;">RHJ Gastro – Mobilní portál řidiče</h2>
-            <p style="margin: 4px 0 0 0; font-weight: 600;">Rychlé hlášení závad a zápis tankování / nabíjení z terénu</p>
+        <div style="background-color: #eae5f5; padding: 24px 32px; border-radius: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 25px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #d1cce3;">
+            <div style="display: flex; align-items: center; gap: 20px;">
+                <div style="background: white; padding: 10px 14px; border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <span style="font-size: 30px; font-weight: 900; color: #5b4b8a; letter-spacing: -1px;">RHJ</span>
+                </div>
+                <div>
+                    <h1 style="color: #5b4b8a !important; margin: 0; font-size: 32px !important; font-weight: 900;">RHJ Gastro – Rozhraní pro řidiče</h1>
+                    <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rychlý záznam tankování / nabíjení pro vozidlo (v6.2.3)</p>
+                </div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    
+
     if st.session_state['admin_autentizovan'] or st.session_state['simulovat_ridice']:
         if st.button("⬅️ Zpět do administrace flotily"):
             st.session_state['simulovat_ridice'] = False
             st.query_params.clear()
             st.rerun()
 
-    aktivni_ridic = qr_ridic
-    skutecna_spz = qr_spz
-    is_ev_car = zisti_zda_je_ev(skutecna_spz)
+    df_auta = get_vsechna_auta()
+    df_ridici_mobil = get_ridici()
 
-    st.markdown(
-        f"""
-        <div style="background: white; padding: 15px 20px; border-radius: 12px; border: 1px solid #d1cce3; margin-bottom: 20px; display: flex; justify-content: space-around; text-align: center;">
-            <div>
-                <span style="font-size: 13px; color: #666; display: block;">Přihlášený řidič:</span>
-                <strong style="font-size: 17px; color: #5b4b8a;">{aktivni_ridic}</strong>
-            </div>
-            <div style="border-left: 1px solid #e2e8f0; padding-left: 20px;">
-                <span style="font-size: 13px; color: #666; display: block;">Přiřazené vozidlo (SPZ):</span>
-                <strong style="font-size: 17px; color: #2563eb; font-family: monospace;">{skutecna_spz}</strong> {'(Elektromobil)' if is_ev_car else ''}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    seznam_ridicu = []
+    if not df_ridici_mobil.empty and 'jmeno' in df_ridici_mobil.columns:
+        seznam_ridicu.extend(df_ridici_mobil['jmeno'].dropna().tolist())
+    if not df_auta.empty and 'staly_ridic' in df_auta.columns:
+        seznam_ridicu.extend(df_auta['staly_ridic'].dropna().tolist())
     
-    driver_tab1, driver_tab2 = st.tabs(["⚡ Zapsat tankování / Nabíjení EV", "⚠️ Nahlásit závadu"])
-    
-    with driver_tab1:
-        if is_ev_car:
-            st.subheader("⚡ Zapsat nabíjení elektromobilu")
-        else:
-            st.subheader("⛽ Zapsat tankování paliva (Čerpací stanice)")
+    seznam_ridicu = sorted(list(set([str(r).strip() for r in seznam_ridicu if str(r).strip() and str(r).strip() != 'Neuveden'])))
+    if not seznam_ridicu:
+        seznam_ridicu = ["Neznámý řidič"]
 
-        with st.form("driver_tank_form"):
-            d_km = st.number_input("Aktuální stav tachometru (km)", min_value=0, step=100)
-            
-            if is_ev_car:
-                d_zdroj = st.selectbox("Zdroj nabíjení", ["Wallbox", "Zasuvka 220"])
-                st.markdown("#### 🔋 Počáteční stav baterie a kWh")
-                d_p_od = st.slider("Počáteční stav baterie (%)", min_value=0, max_value=100, value=20, step=1)
-                d_p_do = 100
-                
-                total_battery_capacity = 50.0
-                missing_percentage = 100 - d_p_od
-                d_mnozstvi = round((missing_percentage / 100.0) * total_battery_capacity, 2)
-                d_teplota = 0.0
-                
-                conn_c = get_connection()
-                cur_c = conn_c.cursor()
-                cur_c.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'")
-                row_c = cur_c.fetchone()
-                cena_kwh_val = float(row_c[0]) if row_c else 6.50
-                conn_c.close()
-                
-                d_cena = round(d_mnozstvi * cena_kwh_val, 2)
+    st.markdown("### Výběr řidiče a vozidla")
+    
+    default_ridic_idx = 0
+    if qr_ridic_param in seznam_ridicu:
+        default_ridic_idx = seznam_ridicu.index(qr_ridic_param)
+    
+    selected_driver_name = st.selectbox("1. Jméno řidiče", seznam_ridicu, index=default_ridic_idx)
+
+    if not df_auta.empty:
+        df_auta['car_label'] = df_auta.apply(lambda r: f"{r['nazev']} (SPZ: {r['spz']})", axis=1)
+        
+        default_car_idx = 0
+        if qr_spz_param:
+            match_rows = df_auta[df_auta['spz'] == qr_spz_param]
+            if not match_rows.empty:
+                default_car_idx = df_auta.index.get_loc(match_rows.index[0])
+
+        selected_car_label = st.selectbox("2. Typ a SPZ", df_auta['car_label'].tolist(), index=default_car_idx)
+        selected_car_row = df_auta[df_auta['car_label'] == selected_car_label].iloc[0]
+        
+        active_spz = selected_car_row['spz']
+        auto = selected_car_row
+    else:
+        auto = None
+        active_spz = None
+
+    if auto is not None:
+        pohonna_hmota = str(auto['typ_pohonu']).strip().lower()
+        is_elektro = 'elektřina' in pohonna_hmota or 'elektre' in pohonna_hmota or 'ev' in pohonna_hmota
+
+        st.markdown(f"### Zvolené vozidlo: **{auto['nazev']}** (SPZ: **{auto['spz']}**)")
+        st.markdown(f"**Pohonná hmota:** {auto['typ_pohonu']} | **Aktivní řidič:** {selected_driver_name}")
+        st.markdown('---')
+
+        driver_tab1, driver_tab2 = st.tabs(["⚡ Zapsat tankování / Nabíjení EV", "⚠️ Nahlásit závadu"])
+
+        with driver_tab1:
+            if not is_elektro:
+                with st.form('driver_fuel_form'):
+                    d_km = st.number_input('Aktuální stav tachometru (km)', min_value=0, step=100)
+                    d_litry = st.number_input('Množství paliva (litry)', min_value=0.0, step=1.0)
+                    d_cena = st.number_input('Celková cena (Kč)', min_value=0.0, step=10.0)
+
+                    submitted_fuel = st.form_submit_button('Uložit')
+                    if submitted_fuel:
+                        if selected_driver_name.strip():
+                            pridat_zaznam_paliva(auto['spz'], selected_driver_name, d_km, 'Čerpací stanice / Veřejný zdroj', d_litry, d_cena)
+                            st.success('Záznam o tankování byl úspěšně uložen!')
+                        else:
+                            st.error('Zadejte prosím své jméno.')
             else:
-                d_zdroj = "Čerpací stanice"
-                d_mnozstvi = st.number_input("Množství (litry)", min_value=0.0, step=1.0)
-                d_cena = st.number_input("Celková cena (Kč)", min_value=0.0, step=10.0)
-                d_p_od, d_p_do, d_teplota = 0.0, 100.0, 0.0
-            
-            d_submit_tank = st.form_submit_button("Uložit záznam")
-            
-            if d_submit_tank:
-                if skutecna_spz:
-                    pridat_zaznam_paliva(skutecna_spz, aktivni_ridic, d_km, d_zdroj, d_mnozstvi, d_cena, d_p_od, d_p_do, d_teplota)
-                    st.success("Záznam byl úspěšně uložen!")
-                else:
-                    st.error("Chybí identifikace vozidla.")
+                conn = get_connection()
+                cursor = conn.cursor()
+                res_kwh = cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'").fetchone()
+                cena_za_kwh = float(res_kwh[0]) if res_kwh else 6.50
+                conn.close()
 
-    with driver_tab2:
-        st.subheader("Nahlásit novou závadu na vozidle")
-        with st.form("driver_zavada_form"):
-            d_popis_zavady = st.text_area("Popis závady / problémů:")
-            d_submit_zavada = st.form_submit_button("Odeslat hlášení závady")
-            
-            if d_submit_zavada:
-                if d_popis_zavady and skutecna_spz:
-                    pridat_zavadu(skutecna_spz, aktivni_ridic, d_popis_zavady)
-                    st.success("Závada byla úspěšně odeslána do centrální správy!")
-                else:
-                    st.error("Vyplňte prosím popis závady.")
+                kapacita_baterie_kwh = 37.3
+
+                with st.form('driver_electro_form'):
+                    d_km_el = st.number_input('Aktuální stav tachometru (km)', min_value=0, step=100)
+                    d_zdroj_el = st.selectbox("Zdroj nabíjení", ["Wallbox", "Zasuvka 220", "Veřejná nabíječka"])
                     
+                    st.markdown('#### Stav baterie')
+                    stav_procenta = st.slider('Aktuální stav baterie před nabíjením (%)', min_value=0, max_value=100, value=20, step=1)
+
+                    chybi_procenta = max(0, 100 - stav_procenta)
+                    dopocitane_kwh = (chybi_procenta / 100.0) * kapacita_baterie_kwh
+                    dopocitana_cena = dopocitane_kwh * cena_za_kwh
+
+                    st.info(f"📊 **Dopočet do plného nabití (100%):** Chybí **{chybi_procenta} %** kapacity (~**{dopocitane_kwh:.2f} kWh**). Odhadovaná cena nabití: **{dopocitana_cena:.2f} Kč** (při {cena_za_kwh} Kč/kWh).")
+
+                    submitted_electro = st.form_submit_button('Uložit')
+                    if submitted_electro:
+                        if selected_driver_name.strip():
+                            pridat_zaznam_paliva(auto['spz'], selected_driver_name, d_km_el, d_zdroj_el, dopocitane_kwh, dopocitana_cena, stav_procenta, 100, 0.0)
+                            st.success('Záznam o nabíjení byl úspěšně uložen!')
+                        else:
+                            st.error('Zadejte prosím své jméno.')
+
+        with driver_tab2:
+            st.subheader("Nahlásit novou závadu na vozidle")
+            with st.form("driver_zavada_form"):
+                d_popis_zavady = st.text_area("Popis závady / problémů:")
+                d_submit_zavada = st.form_submit_button("Odeslat hlášení závady")
+                
+                if d_submit_zavada:
+                    if d_popis_zavady:
+                        pridat_zavadu(auto['spz'], selected_driver_name, d_popis_zavady)
+                        st.success("Závada byla úspěšně odeslána do centrální správy!")
+                    else:
+                        st.error("Vyplňte prosím popis závady.")
+    else:
+        st.error('V databázi nejsou žádná vozidla.')
+
     st.stop()
 
 if not st.session_state['admin_autentizovan']:
@@ -868,8 +984,7 @@ st.markdown(
             </div>
             <div>
                 <h1 style="color: #5b4b8a !important; margin: 0; font-size: 32px !important; font-weight: 900;">RHJ Gastro – Správa vozového parku</h1>
-                <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rozvoz hotových jídel — Fleet Management & Operations System (v4.1.1)</p>
-                <p style="color: #666 !important; margin: 4px 0 0 0; font-size: 12px !important;">&copy; 2026 RHJ Gastro. All rights reserved. Všechna práva vyhrazena.</p>
+                <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rozvoz hotových jídel — Fleet Management & Operations System (v6.2.3)</p>
             </div>
         </div>
         <div style="text-align: right; display: flex; gap: 10px; align-items: center;">
@@ -891,6 +1006,7 @@ if st.button("🚪 Odhlásit admin"):
 
 st.markdown("</div></div>", unsafe_allow_html=True)
 
+# ==================== NAVIGACE ====================
 st.markdown('### 🎛️ Hlavní menu')
 nav_col1, nav_col2, nav_col3, nav_col4, nav_col5, nav_col6, nav_col7, nav_col8 = st.columns(8)
 
@@ -925,6 +1041,7 @@ st.markdown('---')
 akt_sekce = st.session_state['active_tab']
 upoz_stk, upoz_dz, upoz_poj, upoz_olej, upoz_ridicaky = ziskej_upozorneni()
 
+# ==================== 1. VOZIDLA ====================
 if akt_sekce == '🏢 Vozidla':
     if st.session_state['car_action'] == 'add':
         st.header('➕ Přidat nové vozidlo')
@@ -936,15 +1053,15 @@ if akt_sekce == '🏢 Vozidla':
             c1, c2 = st.columns(2)
             with c1:
                 new_spz = st.text_input('SPZ')
-                new_nazev = st.text_input('Model (např. Maxus eDeliver 3, VW Caddy EV...)')
+                new_nazev = st.text_input('Model')
                 new_vin = st.text_input('VIN')
+                new_pohonu = st.selectbox('Pohonná hmota', ['Nafta', 'Natural', 'Elektřina', 'LPG'])
                 new_stk = st.text_input('STK do (YYYY-MM-DD)', value='2027-01-01')
-                new_dz = st.text_input('DZ do (YYYY-MM-DD)', value='2027-01-01')
             with c2:
-                new_pohonu = st.selectbox('Pohon', ['EV', 'Diesel', 'firemní', 'LPG', 'Natural'])
+                new_dz = st.text_input('DZ do (YYYY-MM-DD)', value='2027-01-01')
                 new_pojisteni = st.text_input('Pojištění do (YYYY-MM-DD)', value='2027-01-01')
-                new_pneu = st.text_input('Pneu rozměr', value='215/70 R15C')
                 new_ridic = st.text_input('Stálý řidič')
+                new_pneu = st.text_input('Pneu (rozměr/typ)', value='Neuveden')
 
             if st.form_submit_button('Uložit vozidlo'):
                 if new_spz:
@@ -959,7 +1076,7 @@ if akt_sekce == '🏢 Vozidla':
                         new_ridic,
                         new_vin,
                     )
-                    st.success('Vozidlo úspěšně přidáno do databáze!')
+                    st.success('Vozidlo přidáno do databáze!')
                     st.session_state['car_action'] = 'view'
                     st.rerun()
                 else:
@@ -967,7 +1084,7 @@ if akt_sekce == '🏢 Vozidla':
 
     elif st.session_state['car_action'] == 'edit' and st.session_state['editing_spz']:
         spz_to_edit = st.session_state['editing_spz']
-        st.header(f'✏️ Upravit / spravovat vozidlo: {spz_to_edit}')
+        st.header(f'✏️ Upravit vozidlo: {spz_to_edit}')
         if st.button('🔙 Zpět na přehled vozidel'):
             st.session_state['car_action'] = 'view'
             st.session_state['editing_spz'] = None
@@ -1011,235 +1128,189 @@ if akt_sekce == '🏢 Vozidla':
             with st.form(f'edit_car_form_{spz_to_edit}'):
                 e_nazev = st.text_input('Model', value=row['nazev'])
                 e_vin = st.text_input('VIN', value=row['vin'])
-                pohony_opts = ['EV', 'Diesel', 'firemní', 'LPG', 'Natural']
-                pohon_idx = (
-                    pohony_opts.index(row['typ_pohonu'])
-                    if row['typ_pohonu'] in pohony_opts
+                
+                palivo_opts = ['Nafta', 'Natural', 'Elektřina', 'LPG']
+                akt_paliva = str(row['typ_pohonu']).strip()
+                palivo_idx = (
+                    palivo_opts.index(akt_paliva)
+                    if akt_paliva in palivo_opts
                     else 0
                 )
-                e_pohon = st.selectbox('Pohon', pohony_opts, index=pohon_idx)
-                e_stk = st.text_input('STK do', value=row['stk_do'])
+                e_pohon = st.selectbox('Pohonná hmota', palivo_opts, index=palivo_idx)
+                
+                e_stk_do = st.text_input('STK do', value=row['stk_do'])
                 e_dz = st.text_input('DZ do', value=row['dz_do'])
-                e_pojisteni = st.text_input('Pojištění do', value=row.get('pojisteni_do', '2027-01-01'))
+                e_pojisteni = st.text_input('Pojištění do', value=row['pojisteni_do'])
                 e_pneu = st.text_input('Pneu rozměr', value=row['pneu_rozmer'])
                 e_ridic = st.text_input('Stálý řidič', value=row['staly_ridic'])
 
-                st.markdown('---')
-                povolit_smazani = st.checkbox('⚠️ Povolit smazání vozidla')
-
-                sub_col1, sub_col2 = st.columns(2)
-                with sub_col1:
-                    ulozeno = st.form_submit_button('Uložit změny')
-                with sub_col2:
-                    smazano = st.form_submit_button('🗑️ Smazat toto vozidlo')
-
-                if ulozeno:
+                submitted_edit = st.form_submit_button('Uložit změny')
+                if submitted_edit:
                     upravit_auto(
                         spz_to_edit,
                         e_nazev,
                         e_pohon,
-                        e_stk,
+                        e_stk_do,
                         e_dz,
                         e_pojisteni,
                         e_pneu,
                         e_ridic,
                         e_vin,
                     )
-                    st.success('Vozidlo aktualizováno v databázi!')
+                    st.success('Vozidlo aktualizováno!')
                     st.session_state['car_action'] = 'view'
                     st.session_state['editing_spz'] = None
                     st.rerun()
-
-                if smazano:
-                    if povolit_smazani:
-                        smazat_auto(spz_to_edit)
-                        st.success(f'Vozidlo {spz_to_edit} bylo úspěšně smazáno.')
-                        st.session_state['car_action'] = 'view'
-                        st.session_state['editing_spz'] = None
-                        st.rerun()
-                    else:
-                        st.error('Pro smazání vozidla musíte zaškrtnout políčko "Povolit smazání vozidla".')
-            
-            st.markdown("---")
-            st.markdown(f"### 📋 Kompletní historie pro: {spz_to_edit}")
-            
-            conn_hist = get_connection()
-            df_h_servis = pd.read_sql_query("SELECT id, datum, km, kategorie, popis, cena, ridic FROM servis WHERE spz=? ORDER BY datum DESC", conn_hist, params=(spz_to_edit,))
-            df_h_tank = pd.read_sql_query("SELECT id, datum, km, zdroj, mnozstvi, cena, procenta_od, procenta_do, teplota, ridic FROM zaznamy WHERE spz=? ORDER BY datum DESC", conn_hist, params=(spz_to_edit,))
-            df_h_zavady = pd.read_sql_query("SELECT id, datum, popis, stav FROM zavady WHERE spz=? ORDER BY datum DESC", conn_hist, params=(spz_to_edit,))
-            conn_hist.close()
-
-            t_s1, t_s2, t_s3 = st.tabs(["🛠️ Servisní úkony", "⛽ Tankování / Nabíjení", "⚠️ Hlášené závady"])
-            
-            with t_s1:
-                if not df_h_servis.empty:
-                    render_styled_table(df_h_servis)
-                    if st.session_state.get('supervizor_autentizovan', False):
-                        st.markdown("##### ★ Supervizor zásah: Smazat chybný servisní záznam")
-                        sup_serv_id = st.selectbox("ID servisu k opravě/smazání", df_h_servis['id'].tolist(), key=f"sup_serv_{spz_to_edit}")
-                        if st.button("🗑️ [Supervizor] Odstranit servisní záznam", key=f"btn_sup_serv_{spz_to_edit}"):
-                            smazat_servisni_zaznam(sup_serv_id)
-                            st.success("Záznam byl supervizorem odstraněn.")
-                            st.rerun()
-                else:
-                    st.info("Žádné servisní záznamy.")
-                    
-            with t_s2:
-                if not df_h_tank.empty:
-                    render_styled_table(df_h_tank)
-                    if st.session_state.get('supervizor_autentizovan', False):
-                        st.markdown("##### ★ Supervizor zásah: Smazat chybný záznam paliva")
-                        sup_tank_id = st.selectbox("ID záznamu paliva k smazání", df_h_tank['id'].tolist(), key=f"sup_tank_{spz_to_edit}")
-                        if st.button("🗑️ [Supervizor] Odstranit záznam paliva", key=f"btn_sup_tank_{spz_to_edit}"):
-                            smazat_zaznam_paliva(sup_tank_id)
-                            st.success("Záznam o palivu byl supervizorem odstraněn.")
-                            st.rerun()
-                else:
-                    st.info("Žádné záznamy o tankování.")
-                    
-            with t_s3:
-                if not df_h_zavady.empty:
-                    render_styled_table(df_h_zavady)
-                    if st.session_state.get('supervizor_autentizovan', False):
-                        st.markdown("##### ★ Supervizor zásah: Uzavřít/smazat závadu")
-                        sup_zav_id = st.selectbox("ID závady k odstranění", df_h_zavady['id'].tolist(), key=f"sup_zav_{spz_to_edit}")
-                        if st.button("🗑️ [Supervizor] Odstranit závadu", key=f"btn_sup_zav_{spz_to_edit}"):
-                            smazat_zavadu(sup_zav_id)
-                            st.success("Závada byla supervizorem odstraněna.")
-                            st.rerun()
-                else:
-                    st.info("Žádné hlášené závady.")
         else:
-            st.error('Vozidlo nebylo nalezeno.')
+            st.error('Vozidlo nebylo nalezeno v databázi.')
+            if st.button('Zpět'):
+                st.session_state['car_action'] = 'view'
+                st.rerun()
 
     else:
         st.header('🏢 Dashboard vozidel')
-        if st.button('➕ Přidat nové vozidlo'):
-            st.session_state['car_action'] = 'add'
-            st.rerun()
+        c_add, c_reset = st.columns([1, 1])
+        with c_add:
+            if st.button('➕ Přidat nové vozidlo'):
+                st.session_state['car_action'] = 'add'
+                st.rerun()
+        with c_reset:
+            if st.button('🔄 Obnovit/Opravit výchozí data aut z tabulky'):
+                obnovit_vychozi_auta()
+                st.success('Data aut byla obnovena a uvedena do pořádku!')
+                st.rerun()
 
         st.markdown('')
         df_auta = get_vsechna_auta()
 
         if not df_auta.empty:
-            conn_z = get_connection()
-            df_vsechny_zavady = pd.read_sql_query("SELECT spz, popis FROM zavady", conn_z)
-            conn_z.close()
-
-            dnes = datetime.now().date()
-            cols = st.columns(2)
-            
-            for idx, row in df_auta.iterrows():
-                pohon_val = str(row['typ_pohonu']).upper()
-                spz_karta = row['spz']
+            num_cars = len(df_auta)
+            for i in range(0, num_cars, 2):
+                cols = st.columns(2)
                 
-                if 'LPG' in pohon_val:
-                    card_class = 'car-card-orange'
-                elif any(x in pohon_val for x in ['EV', 'ELEKTŘINA', 'ELEKTRE', 'BAT']):
-                    card_class = 'car-card-green'
+                row1 = df_auta.iloc[i]
+                pohon_raw1 = str(row1['typ_pohonu']).upper().strip()
+                if 'ELEKTŘINA' in pohon_raw1 or 'ELEKTRE' in pohon_raw1 or 'EV' in pohon_raw1:
+                    card_class1 = 'car-card-green'
+                elif 'LPG' in pohon_raw1:
+                    card_class1 = 'car-card-orange'
                 else:
-                    card_class = 'car-card-blue'
+                    card_class1 = 'car-card-blue'
 
-                olej_radek = f"<p style='margin: 4px 0;'><b>Interval výměny oleje:</b> 10 000 km</p>"
-
-                varovani_html = ""
-                try:
-                    stk_d = datetime.strptime(str(row['stk_do']), '%Y-%m-%d').date()
-                    dny_s = (stk_d - dnes).days
-                    if dny_s <= 30:
-                        varovani_html += f"<div class='warning-badge'>⚠️ STK končí za {dny_s} dní ({row['stk_do']})</div>" if dny_s >= 0 else f"<div class='alert-badge'>🚨 STK propadla!</div>"
-                except Exception:
-                    pass
-
-                try:
-                    dz_d = datetime.strptime(str(row['dz_do']), '%Y-%m-%d').date()
-                    dny_d = (dz_d - dnes).days
-                    if dny_d <= 30:
-                        varovani_html += f"<div class='warning-badge'>⚠️ Dálniční známka končí za {dny_d} dní ({row['dz_do']})</div>" if dny_d >= 0 else f"<div class='alert-badge'>🚨 Dálniční známka propadla!</div>"
-                except Exception:
-                    pass
-
-                try:
-                    poj_d_str = row.get('pojisteni_do', 'Neuveden')
-                    if poj_d_str != 'Neuveden':
-                        poj_d = datetime.strptime(str(poj_d_str), '%Y-%m-%d').date()
-                        dny_p = (poj_d - dnes).days
-                        if dny_p <= 30:
-                            varovani_html += f"<div class='warning-badge'>⚠️ Pojištění končí za {dny_p} dní ({poj_d_str})</div>" if dny_p >= 0 else f"<div class='alert-badge'>🚨 Pojištění propadlo!</div>"
-                except Exception:
-                    pass
-
-                aktivni_zavady_auta = df_vsechny_zavady[df_vsechny_zavady['spz'] == spz_karta]
-                zavada_banner = ""
-                if not aktivni_zavady_auta.empty:
-                    zavada_banner = f'<div class="alert-badge">⚠️ Pozor: Aktivní hlášená závada ({len(aktivni_zavady_auta)}x)</div>'
-
-                with cols[idx % 2]:
+                with cols[0]:
                     st.markdown(
                         f"""
-                            <div class="{card_class}">
-                                <h3 style="margin: 0; color: #1e1b29;">🚗 {row['nazev']}</h3>
-                                <p style="margin: 4px 0;"><b>SPZ:</b> <span style="font-family: monospace; font-weight: 700;">{spz_karta}</span></p>
-                                <p style="margin: 4px 0;"><b>VIN:</b> <span style="font-family: monospace;">{row['vin']}</span></p>
-                                <p style="margin: 4px 0;"><b>Typ pohonu:</b> {row['typ_pohonu']}</p>
-                                <p style="margin: 4px 0;"><b>Stálý řidič:</b> {row['staly_ridic']}</p>
-                                <p style="margin: 4px 0;"><b>STK do:</b> {row['stk_do']} | <b>DZ do:</b> {row['dz_do']}</p>
-                                <p style="margin: 4px 0;"><b>Pojištění do:</b> {row.get('pojisteni_do', 'Neuvedeno')}</p>
-                                <p style="margin: 4px 0;"><b>Pneu:</b> {row['pneu_rozmer']}</p>
-                                {olej_radek}
-                                {varovani_html}
-                                {zavada_banner}
+                            <div class="{card_class1}">
+                                <h3 style="margin: 0; color: #1e1b29;">🚗 {row1['nazev']}</h3>
+                                <p style="margin: 4px 0;"><b>SPZ:</b> <span style="font-family: monospace; font-weight: 700;">{row1['spz']}</span></p>
+                                <p style="margin: 4px 0;"><b>Pohonná hmota:</b> {row1['typ_pohonu']}</p>
+                                <p style="margin: 4px 0;"><b>Stálý řidič:</b> {row1['staly_ridic']}</p>
+                                <p style="margin: 4px 0;"><b>STK do:</b> {row1['stk_do']} | <b>DZ do:</b> {row1['dz_do']}</p>
+                                <p style="margin: 4px 0;"><b>Pojištění do:</b> {row1['pojisteni_do']}</p>
+                                <p style="margin: 4px 0;"><b>Pneu:</b> {row1['pneu_rozmer']}</p>
+                                <p style="margin: 4px 0;"><b>VIN:</b> <span style="font-family: monospace;">{row1['vin']}</span></p>
                             </div>
                             """,
                         unsafe_allow_html=True,
                     )
 
-                    if st.button("✏️ Upravit / Správa & Historie", key=f"edit_btn_{spz_karta}_{idx}"):
-                        st.session_state['car_action'] = 'edit'
-                        st.session_state['editing_spz'] = spz_karta
-                        st.rerun()
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        if st.button(f"✏️ Upravit {row1['spz']}", key=f"edit_btn_{row1['spz']}_{i}"):
+                            st.session_state['car_action'] = 'edit'
+                            st.session_state['editing_spz'] = row1['spz']
+                            st.rerun()
+                    with col_btn2:
+                        st.markdown('<div class="delete-tile-btn">', unsafe_allow_html=True)
+                        if st.button(f"🗑️ Smazat {row1['spz']}", key=f"del_btn_{row1['spz']}_{i}"):
+                            smazat_auto(row1['spz'])
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
 
-                    st.markdown("<br>", unsafe_allow_html=True)
+                if i + 1 < num_cars:
+                    row2 = df_auta.iloc[i + 1]
+                    pohon_raw2 = str(row2['typ_pohonu']).upper().strip()
+                    if 'ELEKTŘINA' in pohon_raw2 or 'ELEKTRE' in pohon_raw2 or 'EV' in pohon_raw2:
+                        card_class2 = 'car-card-green'
+                    elif 'LPG' in pohon_raw2:
+                        card_class2 = 'car-card-orange'
+                    else:
+                        card_class2 = 'car-card-blue'
+
+                    with cols[1]:
+                        st.markdown(
+                            f"""
+                                <div class="{card_class2}">
+                                    <h3 style="margin: 0; color: #1e1b29;">🚗 {row2['nazev']}</h3>
+                                    <p style="margin: 4px 0;"><b>SPZ:</b> <span style="font-family: monospace; font-weight: 700;">{row2['spz']}</span></p>
+                                    <p style="margin: 4px 0;"><b>Pohonná hmota:</b> {row2['typ_pohonu']}</p>
+                                    <p style="margin: 4px 0;"><b>Stálý řidič:</b> {row2['staly_ridic']}</p>
+                                    <p style="margin: 4px 0;"><b>STK do:</b> {row2['stk_do']} | <b>DZ do:</b> {row2['dz_do']}</p>
+                                    <p style="margin: 4px 0;"><b>Pojištění do:</b> {row2['pojisteni_do']}</p>
+                                    <p style="margin: 4px 0;"><b>Pneu:</b> {row2['pneu_rozmer']}</p>
+                                    <p style="margin: 4px 0;"><b>VIN:</b> <span style="font-family: monospace;">{row2['vin']}</span></p>
+                                </div>
+                                """,
+                            unsafe_allow_html=True,
+                        )
+
+                        col_btn3, col_btn4 = st.columns(2)
+                        with col_btn3:
+                            if st.button(f"✏️ Upravit {row2['spz']}", key=f"edit_btn_{row2['spz']}_{i+1}"):
+                                st.session_state['car_action'] = 'edit'
+                                st.session_state['editing_spz'] = row2['spz']
+                                st.rerun()
+                        with col_btn4:
+                            st.markdown('<div class="delete-tile-btn">', unsafe_allow_html=True)
+                            if st.button(f"🗑️ Smazat {row2['spz']}", key=f"del_btn_{row2['spz']}_{i+1}"):
+                                smazat_auto(row2['spz'])
+                                st.rerun()
+                            st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info('V databázi nejsou žádná vozidla.')
 
+# ==================== 2. NASTAVENÍ ====================
 elif akt_sekce == '⚙️ Nastavení':
-    st.header('⚙️ Nastavení aplikace & Notifikace')
+    st.header('⚙️ Nastavení aplikace')
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'")
-    cena_kwh = cursor.fetchone()[0]
-    cursor.close()
+    cena_kwh = cursor.execute(
+        "SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'"
+    ).fetchone()[0]
+    admin_h = cursor.execute(
+        "SELECT hodnota FROM nastaveni WHERE klic = 'admin_heslo'"
+    ).fetchone()[0]
     conn.close()
 
     with st.form('nastaveni_form'):
-        nova_cena = st.number_input('Cena elektřiny za kWh (Kč)', value=float(cena_kwh), format='%.2f')
-        
-        st.markdown("---")
-        st.markdown("### 🔑 Změna administrátorského hesla (pro šéfovou)")
-        nove_admin_heslo = st.text_input("Nové administrátorské heslo", type="password")
-        
-        st.markdown("---")
-        st.markdown("### 🔔 Notifikační kanály (WhatsApp & Gmail)")
-        notif_whatsapp = st.text_input("WhatsApp telefonní číslo (pro okamžitá upozornění na STK/olej)", value="+420")
-        notif_gmail = st.text_input("Gmail / E-mail pro zasílání měsíčních reportů a varování", value="sefova@rhjgastro.cz")
+        nova_cena = st.number_input(
+            'Cena elektřiny za kWh (Kč)',
+            value=float(cena_kwh),
+            format='%.2f',
+        )
+        nove_heslo = st.text_input('Změnit administrátorské heslo', value=str(admin_h), type='password')
         
         if st.form_submit_button('Uložit nastavení'):
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute('UPDATE nastaveni SET hodnota = ? WHERE klic = ?', (str(nova_cena), 'cena_kwh'))
-            if nove_admin_heslo:
-                cursor.execute('INSERT OR REPLACE INTO nastaveni (klic, hodnota) VALUES (?, ?)', ('admin_heslo', nove_admin_heslo))
+            cursor.execute(
+                'UPDATE nastaveni SET hodnota = ? WHERE klic = "cena_kwh"',
+                (str(nova_cena),),
+            )
+            cursor.execute(
+                'UPDATE nastaveni SET hodnota = ? WHERE klic = "admin_heslo"',
+                (str(nove_heslo),),
+            )
             conn.commit()
-            cursor.close()
             conn.close()
-            st.success('Nastavení, administrátorské heslo a notifikační kanály úspěšně uloženy!')
+            st.success('Nastavení úspěšně uloženo!')
 
+# ==================== 3. TANKOVÁNÍ ====================
 elif akt_sekce == '⛽ Tankování':
-    st.header('⛽ Evidence tankování a nabíjení EV')
+    st.header('⛽ Evidence tankování a nabíjení')
 
     if st.session_state['tank_action'] == 'add':
-        if st.button('🔙 Zpět na přehled'):
+        if st.button('🔙 Zpět na přehled tankování'):
             st.session_state['tank_action'] = 'view'
             st.rerun()
 
@@ -1249,376 +1320,247 @@ elif akt_sekce == '⛽ Tankování':
             t_spz = st.selectbox('Vozidlo (SPZ)', spz_list)
             t_ridic = st.text_input('Řidič')
             t_km = st.number_input('Stav tachometru (km)', min_value=0, step=100)
-            
-            is_ev_selected = zisti_zda_je_ev(t_spz)
-            if is_ev_selected:
-                t_zdroj = st.selectbox('Zdroj nabíjení', ['Wallbox', 'Zasuvka 220'])
-                st.markdown("#### 🔋 Počáteční stav baterie a kWh")
-                t_p_od = st.slider('Počáteční stav baterie (%)', min_value=0, max_value=100, value=20, step=1)
-                t_p_do = 100
-                
-                total_battery_capacity = 50.0
-                missing_percentage = 100 - t_p_od
-                t_mnozstvi = round((missing_percentage / 100.0) * total_battery_capacity, 2)
-                t_teplota = 0.0
-                
-                conn_c = get_connection()
-                cur_c = conn_c.cursor()
-                cur_c.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'")
-                row_c = cur_c.fetchone()
-                cena_kwh_val = float(row_c[0]) if row_c else 6.50
-                conn_c.close()
-                
-                t_cena = round(t_mnozstvi * cena_kwh_val, 2)
-            else:
-                t_zdroj = 'Čerpací stanice'
-                t_mnozstvi = st.number_input('Množství (litry)', min_value=0.0, step=1.0)
-                t_cena = st.number_input('Celková cena (Kč)', min_value=0.0, step=10.0)
-                t_p_od, t_p_do, t_teplota = 0.0, 100.0, 0.0
-            
-            if st.form_submit_button('Přidat záznam'):
-                pridat_zaznam_paliva(t_spz, t_ridic, t_km, t_zdroj, t_mnozstvi, t_cena, t_p_od, t_p_do, t_teplota)
-                st.success('Záznam přídán!')
+            t_zdroj = st.selectbox(
+                'Zdroj', ['Čerpací stanice', 'Wallbox', 'Zasuvka 220', 'Veřejná nabíječka']
+            )
+            t_mnozstvi = st.number_input(
+                'Množství (litry / kWh)', min_value=0.0, step=1.0
+            )
+            t_cena = st.number_input('Celková cena (Kč)', min_value=0.0, step=10.0)
+            if st.form_submit_button('Uložit záznam'):
+                pridat_zaznam_paliva(t_spz, t_ridic, t_km, t_zdroj, t_mnozstvi, t_cena)
+                st.success('Záznam o tankování/nabíjení byl přidán!')
                 st.session_state['tank_action'] = 'view'
                 st.rerun()
     else:
-        if st.button('➕ Přidat záznam tankování / nabití'):
+        if st.button('➕ Přidat nový záznam tankování'):
             st.session_state['tank_action'] = 'add'
             st.rerun()
-
         st.markdown('')
-        df_tank = get_zaznamy_paliva()
-        if not df_tank.empty:
-            render_styled_table(df_tank)
-            sel_id = st.selectbox('ID záznamu k smazání', df_tank['id'].tolist(), key='del_tank_sel')
-            st.markdown('<div class="delete-tile-btn">', unsafe_allow_html=True)
-            if st.button('Smazat záznam'):
-                smazat_zaznam_paliva(sel_id)
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
+        df_zaz = get_zaznamy_paliva()
+        if not df_zaz.empty:
+            render_styled_table(df_zaz)
         else:
-            st.info('Zatím žádné záznamy.')
+            st.info('Žádné záznamy o tankování.')
 
+# ==================== 4. SERVIS ====================
 elif akt_sekce == '🛠️ Servis':
     st.header('🛠️ Servisní záznamy')
-
     if st.session_state['servis_action'] == 'add':
-        if st.button('🔙 Zpět na přehled servisů'):
+        if st.button('🔙 Zpět na přehled servisu'):
             st.session_state['servis_action'] = 'view'
             st.rerun()
 
         with st.form('add_servis_form'):
             df_auta = get_vsechna_auta()
             spz_list = df_auta['spz'].tolist() if not df_auta.empty else []
-            s_spz = st.selectbox('Vozidlo (SPZ)', spz_list, key='s_spz')
-            s_ridic = st.text_input('Řidič', key='s_ridic')
-            s_km = st.number_input('Tachometr (km)', min_value=0, step=100, key='s_km')
-            s_kat = st.selectbox('Kategorie', ['Pravidelná prohlídka', 'Výměna oleje', 'Pneumatiky', 'Oprava', 'STK / Emise', 'Jiné'])
-            s_popis = st.text_area('Popis práce / dílů')
-            s_cena = st.number_input('Cena celkem (Kč)', min_value=0.0, step=100.0, key='s_cena')
-            if st.form_submit_button('Uložit servis'):
+            s_spz = st.selectbox('Vozidlo (SPZ)', spz_list)
+            s_km = st.number_input('Stav tachometru (km)', min_value=0, step=100)
+            s_kat = st.selectbox(
+                'Kategorie',
+                [
+                    'Výměna oleje',
+                    'Pneumatiky',
+                    'STK oprava',
+                    'Brzdy',
+                    'Běžný servis',
+                    'Ostatní',
+                ],
+            )
+            s_popis = st.text_area('Popis provedeného servisu')
+            s_cena = st.number_input('Celková cena (Kč)', min_value=0.0, step=100.0)
+            s_ridic = st.text_input('Zodpovědná osoba / Řidič')
+
+            if st.form_submit_button('Uložit servisní záznam'):
                 pridat_servisni_zaznam(s_spz, s_km, s_kat, s_popis, s_cena, s_ridic)
-                st.success('Servisní záznam uložen!')
+                st.success('Servisní záznam byl úspěšně uložen!')
                 st.session_state['servis_action'] = 'view'
                 st.rerun()
     else:
-        if st.button('➕ Přidat servisní úkon'):
+        if st.button('➕ Přidat nový servisní záznam'):
             st.session_state['servis_action'] = 'add'
             st.rerun()
-
         st.markdown('')
         df_servis = get_zaznamy_servis()
         if not df_servis.empty:
             render_styled_table(df_servis)
-            sel_s_id = st.selectbox('ID servisu k smazání', df_servis['id'].tolist(), key='del_servis_sel')
-            st.markdown('<div class="delete-tile-btn">', unsafe_allow_html=True)
-            if st.button('Smazat servisní záznam'):
-                smazat_servisni_zaznam(sel_s_id)
+        else:
+            st.info('Žádné záznamy v servisu.')
+
+# ==================== 5. ŘIDIČI ====================
+elif akt_sekce == '👥 Řidiči':
+    st.header('👥 Správa řidičů a řidičských průkazů')
+    
+    with st.form('add_ridic_form'):
+        c_r1, c_r2, c_r3 = st.columns(3)
+        with c_r1:
+            r_jmeno = st.text_input('Jméno a příjmení řidiče')
+        with c_r2:
+            r_tel = st.text_input('Telefonní číslo')
+        with c_r3:
+            r_do = st.text_input('Platnost řidičáku do (YYYY-MM-DD)', value='2028-01-01')
+            
+        if st.form_submit_button('Uložit / Přidat řidiče'):
+            if r_jmeno:
+                pridat_ridice(r_jmeno, r_tel, r_do)
+                st.success(f"Řidič {r_jmeno} byl úspěšně uložen!")
                 st.rerun()
+            else:
+                st.error("Zadejte jméno řidiče.")
+                
+    st.markdown('---')
+    df_ridici = get_ridici()
+    if not df_ridici.empty:
+        for idx, r_row in df_ridici.iterrows():
+            cols = st.columns([3, 1])
+            with cols[0]:
+                st.markdown(f"**{r_row['jmeno']}** | Tel: {r_row['telefon']} | Řidičák do: `{r_row['ridicak_do']}`")
+            with cols[1]:
+                st.markdown('<div class="delete-tile-btn">', unsafe_allow_html=True)
+                if st.button(f"Smazat##{r_row['id']}", key=f"del_r_{r_row['id']}"):
+                    smazat_ridice(r_row['id'])
+                    st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.info("V databázi nejsou evidováni žádní samostatní řidiči.")
+
+# ==================== 6. STATISTIKY ====================
+elif akt_sekce == '📊 Statistiky':
+    st.header('📊 Statistiky a přehledy flotily')
+    
+    col_st1, col_st2, col_st3 = st.columns(3)
+    df_auta_stat = get_vsechna_auta()
+    df_servis_stat = get_zaznamy_servis()
+    df_palivo_stat = get_zaznamy_paliva()
+    
+    celk_auta = len(df_auta_stat)
+    celk_nakl_s = df_servis_stat['cena'].sum() if not df_servis_stat.empty else 0
+    celk_nakl_p = df_palivo_stat['cena'].sum() if not df_palivo_stat.empty else 0
+    
+    with col_st1:
+        st.metric("Celkem vozidel", celk_auta)
+    with col_st2:
+        st.metric("Náklady na servis", f"{celk_nakl_s:,.2f} Kč")
+    with col_st3:
+        st.metric("Náklady na palivo/energie", f"{celk_nakl_p:,.2f} Kč")
+        
+    st.markdown('---')
+    st.subheader('🚨 Aktuální přehled hlídání termínů a limitů')
+    
+    col_a1, col_a2 = st.columns(2)
+    with col_a1:
+        st.markdown('<div class="alert-box">', unsafe_allow_html=True)
+        st.markdown('#### 📅 STK vozidel')
+        if upoz_stk:
+            for item in upoz_stk:
+                st.markdown(item)
+        else:
+            st.success('Všechny STK jsou v pořádku (žádné do 30 dnů nekončí).')
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('<br>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="alert-box">', unsafe_allow_html=True)
+        st.markdown('#### 🛡️ Pojištění vozidel')
+        if upoz_poj:
+            for item in upoz_poj:
+                st.markdown(item)
+        else:
+            st.success('Všechna pojištění jsou v pořádku.')
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<br>', unsafe_allow_html=True)
+
+        st.markdown('<div class="alert-box">', unsafe_allow_html=True)
+        st.markdown('#### 🪪 Řidičské průkazy')
+        if upoz_ridicaky:
+            for item in upoz_ridicaky:
+                st.markdown(item)
+        else:
+            st.success('Všechny řidičské průkazy jsou platné.')
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_a2:
+        st.markdown('<div class="alert-box">', unsafe_allow_html=True)
+        st.markdown('#### 🎫 Dálniční známky (DZ)')
+        if upoz_dz:
+            for item in upoz_dz:
+                st.markdown(item)
+        else:
+            st.success('Všechny dálniční známky jsou v pořádku.')
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('<br>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="alert-box">', unsafe_allow_html=True)
+        st.markdown('#### 🛢️ Výměna motorového oleje')
+        if upoz_olej:
+            st.markdown('<div class="oil-scroll-container">', unsafe_allow_html=True)
+            for item in upoz_olej:
+                st.markdown(item)
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info('Žádné servisní záznamy.')
-
-elif akt_sekce == '👥 Řidiči':
-    st.header('👥 Evidence řidičů a platnosti řidičských průkazů')
-    
-    col_r1, col_r2 = st.columns([1, 1])
-    with col_r1:
-        st.subheader('Přidat / upravit řidiče')
-        with st.form('add_ridic_form'):
-            r_jmeno = st.text_input('Jméno a příjmení řidiče')
-            r_tel = st.text_input('Telefonní číslo', value='+420')
-            r_do = st.text_input('Platnost řidičského průkazu do (YYYY-MM-DD)', value='2028-01-01')
-            
-            if st.form_submit_button('Uložit řidiče'):
-                if r_jmeno:
-                    pridat_ridice(r_jmeno, r_tel, r_do)
-                    st.success(f'Řidič {r_jmeno} byl úspěšně uložen.')
-                    st.rerun()
-                else:
-                    st.error('Zadejte prosím jméno řidiče.')
-
-    with col_r2:
-        st.subheader('Seznam evidovaných řidičů')
-        df_ridici = get_ridici()
-        if not df_ridici.empty:
-            render_styled_table(df_ridici)
-            sel_r_id = st.selectbox('ID řidiče k odstranění', df_ridici['id'].tolist(), key='del_ridic_sel')
-            if st.button('🗑️ Smazat řidiče'):
-                smazat_ridice(sel_r_id)
-                st.success('Řidič byl smazán.')
-                st.rerun()
-        else:
-            st.info('Zatím nejsou evidováni žádní řidiči.')
-
-elif akt_sekce == '📊 Statistiky':
-    st.header('📊 Barevný manažerský dashboard flotily & Reporty')
-    st.markdown("Provozní přehled nákladů, výpočet spotřeby a exporty pro vedení.")
-    
-    df_tank = get_zaznamy_paliva()
-    df_servis = get_zaznamy_servis()
-    df_auta_exp = get_vsechna_auta()
-    df_zavady_exp = get_zavady()
-
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    celkem_tank_naklady = df_tank['cena'].sum() if not df_tank.empty else 0.0
-    celkem_servis_naklady = df_servis['cena'].sum() if not df_servis.empty else 0.0
-    celkem_vse = celkem_tank_naklady + celkem_servis_naklady
-    
-    with kpi1:
-        st.metric("💰 Celkové výdaje flotily", f"{celkem_vse:,.2f} Kč")
-    with kpi2:
-        st.metric("🚗 Aktivní vozidla", f"{len(df_auta_exp)}")
-    with kpi3:
-        st.metric("⚠️ Otevřené závady", f"{len(df_zavady_exp)}")
-    with kpi4:
-        st.metric("🛠️ Servisní úkony", f"{len(df_servis)}")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    col_stk, col_dz, col_poj, col_olej, col_rid = st.columns(5)
-    with col_stk:
-        st.markdown('<div class="alert-box"><h4>🔴 Platnost STK</h4>', unsafe_allow_html=True)
-        if upoz_stk:
-            for u in upoz_stk: st.warning(u)
-        else: st.success("Všechna vozidla platná STK.")
+            st.success('Všechny výměny oleje jsou v pořádku.')
         st.markdown('</div>', unsafe_allow_html=True)
 
-    with col_dz:
-        st.markdown('<div class="alert-box"><h4>🛣️ Dálniční známky</h4>', unsafe_allow_html=True)
-        if upoz_dz:
-            for u in upoz_dz: st.warning(u)
-        else: st.success("Všechny známky OK.")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_poj:
-        st.markdown('<div class="alert-box"><h4>🛡️ Pojištění</h4>', unsafe_allow_html=True)
-        if upoz_poj:
-            for u in upoz_poj: st.warning(u)
-        else: st.success("Pojištění platná.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-    with col_olej:
-        st.markdown('<div class="alert-box"><h4>🛢️ Výměny oleje</h4><div class="oil-scroll-container">', unsafe_allow_html=True)
-        if upoz_olej:
-            for u in upoz_olej: st.warning(u)
-        else: st.success("Olej OK.")
-        st.markdown('</div></div>', unsafe_allow_html=True)
-
-    with col_rid:
-        st.markdown('<div class="alert-box"><h4>🪪 Řidičské průkazy</h4><div class="oil-scroll-container">', unsafe_allow_html=True)
-        if upoz_ridicaky:
-            for u in upoz_ridicaky: st.warning(u)
-        else: st.success("Všechny řidičáky OK.")
-        st.markdown('</div></div>', unsafe_allow_html=True)
-        
-    st.markdown("<br><hr><br>", unsafe_allow_html=True)
-
-    st.markdown("### 📥 Exporty dat pro vedení")
-    ex_col1, ex_col2 = st.columns(2)
-
-    with ex_col1:
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_auta_exp.to_excel(writer, sheet_name='Vozidla', index=False)
-            df_tank.to_excel(writer, sheet_name='Tankovani_Energie', index=False)
-            df_servis.to_excel(writer, sheet_name='Servis', index=False)
-        excel_data = output.getvalue()
-        
-        st.download_button(
-            label="📊 Stáhnout kompletní Excel report flotily",
-            data=excel_data,
-            file_name=f"RHJ_Gastro_Flotila_Report_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    with ex_col2:
-        sumar_txt = f"RHJ GASTRO - SOUHRNNY REPORT\nDatum vygenerovani: {datetime.now().strftime('%d.%m.%Y')}\n\nPocet vozidel: {len(df_auta_exp)}\nCelkem vydaje za palivo/energie: {df_tank['cena'].sum() if not df_tank.empty else 0} Kc\nCelkem vydaje za servis: {df_servis['cena'].sum() if not df_servis.empty else 0} Kc"
-        st.download_button(
-            label="📄 Stáhnout rychlý textový souhrn (TXT)",
-            data=sumar_txt,
-            file_name=f"RHJ_Souhrn_{datetime.now().strftime('%Y-%m-%d')}.txt",
-            mime="text/plain"
-        )
-
-    st.markdown("<br><hr><br>", unsafe_allow_html=True)
-
-    st.markdown("### ⛽ Hlášení spotřeby a efektivity (l/100 km nebo kWh/100 km)")
-    if not df_tank.empty:
-        spotreba_rows = []
-        spz_unique = df_tank['spz'].unique()
-        for s_spz in spz_unique:
-            df_t_car = df_tank[df_tank['spz'] == s_spz].sort_values('km')
-            if len(df_t_car) >= 2:
-                prvni = df_t_car.iloc[0]
-                posledni = df_t_car.iloc[-1]
-                ujeto_km = posledni['km'] - prvni['km']
-                celkem_mnozstvi = df_t_car['mnozstvi'].sum()
-                if ujeto_km > 0:
-                    spotreba_100 = round((celkem_mnozstvi / ujeto_km) * 100, 2)
-                    spotreba_rows.append({'SPZ': s_spz, 'Ujeto km': ujeto_km, 'Spotřebováno (l/kWh)': celkem_mnozstvi, 'Průměr na 100 km': spotreba_100})
-        
-        if spotreba_rows:
-            df_spotreba = pd.DataFrame(spotreba_rows)
-            render_styled_table(df_spotreba)
-        else:
-            st.info("Pro výpočet spotřeby je potřeba alespoň 2 záznamy tankování s různým stavem tachometru u stejného auta.")
-    else:
-        st.info("Žádná data o tankování pro výpočet spotřeby.")
-
-    st.markdown("<br><hr><br>", unsafe_allow_html=True)
-
-    g_col1, g_col2 = st.columns(2)
-
-    with g_col1:
-        st.markdown("### ⚡ Náklady na palivo a energii (podle aut)")
-        if not df_tank.empty:
-            fig_palivo = px.bar(
-                df_tank, 
-                x='spz', 
-                y='cena', 
-                color='zdroj', 
-                barmode='group',
-                title="Výdaje za energie / palivo dle SPZ",
-                color_discrete_sequence=px.colors.qualitative.Vivid
-            )
-            fig_palivo.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', 
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(color='#1e1b29', size=13),
-                hoverlabel=dict(bgcolor="white", font_size=13, font_family="Inter")
-            )
-            st.plotly_chart(fig_palivo, use_container_width=True)
-        else:
-            st.info("Zatím nejsou k dispozici data o tankování.")
-
-    with g_col2:
-        st.markdown("### 🛠️ Porovnání nákladů na servis")
-        if not df_servis.empty:
-            fig_servis = px.pie(
-                df_servis, 
-                names='kategorie', 
-                values='cena', 
-                title="Podíl servisních nákladů podle kategorií",
-                hole=0.4,
-                color_discrete_sequence=px.colors.qualitative.Prism
-            )
-            fig_servis.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', 
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(color='#1e1b29', size=13),
-                hoverlabel=dict(bgcolor="white", font_size=13, font_family="Inter")
-            )
-            st.plotly_chart(fig_servis, use_container_width=True)
-        else:
-            st.info("Zatím nejsou k dispozici servisní záznamy.")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    if not df_tank.empty or not df_servis.empty:
-        st.markdown("### 👥 Náklady podle jednotlivých řidičů")
-        df_tank_r = df_tank[['ridic', 'cena']].copy() if not df_tank.empty else pd.DataFrame(columns=['ridic', 'cena'])
-        df_servis_r = df_servis[['ridic', 'cena']].copy() if not df_servis.empty else pd.DataFrame(columns=['ridic', 'cena'])
-        df_spojene = pd.concat([df_tank_r, df_servis_r])
-        df_spojene['ridic'] = df_spojene['ridic'].replace(['', None], 'Neznámý řidič').fillna('Neznámý řidič')
-        df_soucet = df_spojene.groupby('ridic', as_index=False)['cena'].sum()
-
-        fig_ridici = px.funnel(
-            df_soucet, 
-            x='cena', 
-            y='ridic', 
-            title="Celkové provozní náklady na řidiče (Palivo + Servis)",
-            color_discrete_sequence=['#8b5cf6']
-        )
-        fig_ridici.update_layout(
-            plot_bgcolor='rgba(0,0,0,0)', 
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(color='#1e1b29', size=13),
-            hoverlabel=dict(bgcolor="white", font_size=13, font_family="Inter")
-        )
-        st.plotly_chart(fig_ridici, use_container_width=True)
-
+# ==================== 7. QR KÓD ====================
 elif akt_sekce == '📱 QR Kód':
-    st.header('📱 Generování QR kódů pro stínítka vozidel')
-    st.markdown("Vyberte konkrétní vozidlo a vygenerujte specifický QR kód pro sluneční clonu.")
-    
-    # OPRAVENO PRO STREAMLIT CLOUD: Zjištění reálné domény aplikace nebo možnost fallbacku
-    try:
-        # Pokus o získání hostitele z request headers, pokud je dostupné, nebo použití výchozí cloudové URL
-        zakladni_url = st.context.headers.get("Host", None)
-        if zakladni_url:
-            if not zakladni_url.startswith("http"):
-                zakladni_url = f"https://{zakladni_url}"
-        else:
-            # Zde si případně můžete upravit URL na vaši ostrou Streamlit Cloud adresu, např: "https://vaše-aplikace.streamlit.app"
-            zakladni_url = "https://rhjgastro-flotila.streamlit.app" 
-    except Exception:
-        zakladni_url = "https://rhjgastro-flotila.streamlit.app"
-    
-    df_auta_qr = get_vsechna_auta()
-    if not df_auta_qr.empty:
-        options_map = {}
-        for _, row_item in df_auta_qr.iterrows():
-            s_spz = row_item['spz']
-            nazev_auta = row_item['nazev']
-            r_jmeno = row_item['staly_ridic'] if row_item['staly_ridic'] and row_item['staly_ridic'] != 'Neuveden' else 'Neznámý řidič'
-            
-            display_label = f"{s_spz} – {nazev_auta} (Řidič: {r_jmeno})"
-            options_map[display_label] = (s_spz, r_jmeno if r_jmeno != 'Neznámý řidič' else '')
-            
-        selected_label = st.selectbox("Vyberte vozidlo pro generování QR kódu:", list(options_map.keys()))
-        qr_spz_vyber, staly_ridic_auta = options_map[selected_label]
-        
-        cilova_url = f"{zakladni_url}/?spz={qr_spz_vyber}&ridic={staly_ridic_auta}"
-        
-        st.markdown(f"**Cílová adresa pro vůz {qr_spz_vyber}:**")
-        st.code(cilova_url)
-        
-        col_qr1, col_qr2 = st.columns([1, 2])
-        with col_qr1:
-            st.image(generuj_qr_kod(cilova_url), caption=f"SPZ: {qr_spz_vyber} | Řidič: {staly_ridic_auta or 'Neznámý'}", width=250)
-        with col_qr2:
-            zobrazeny_ridic = staly_ridic_auta if staly_ridic_auta else 'Neuveden'
-            st.markdown(f"""
-                ### 📌 Instrukce pro tisk:
-                1. Vybrané vozidlo: **<span style="font-size: 1.2em; font-weight: bold;">{qr_spz_vyber}</span>** (Stálý řidič: {zobrazeny_ridic})
-                2. QR kód si uložte nebo vytiskněte.
-                3. Zalaminujte ho a nalepte na sluneční clonu vozidla.
-                4. Kurýr po naskenování rovnou hlásí závady nebo tankování pro tento konkrétní vůz bez zdržování!
-            """, unsafe_allow_html=True)
-    else:
-        st.info("V databázi nejsou žádná vozidla pro generování QR kódů.")
+    st.header('📱 Generátor QR kódů pro řidiče')
+    st.markdown('Každé vozidlo má svůj jedinečný QR kód. Po naskenování mobilním telefonem se řidiči otevře zjednodušený formulář pro zápis tankování/nabíjení a hlášení závad.')
 
+    df_auta = get_vsechna_auta()
+    if not df_auta.empty:
+        try:
+            host_ip = socket.gethostbyname(socket.gethostname())
+        except Exception:
+            host_ip = 'localhost'
+            
+        base_url = f"http://{host_ip}:8501"
+
+        for index, row in df_auta.iterrows():
+            spz = row['spz']
+            nazev = row['nazev']
+            ridic = row['staly_ridic'] if row['staly_ridic'] != 'Neuveden' else 'Neznámý řidič'
+
+            url_adresa = f"{base_url}/?spz={spz}&ridic={ridic}"
+
+            with st.expander(f"🚗 {nazev} (SPZ: {spz}) – Stálý řidič: {ridic}"):
+                c_qr1, c_qr2 = st.columns([1, 2])
+                with c_qr1:
+                    qr_bytes = generuj_qr_kod(url_adresa)
+                    st.image(qr_bytes, width=200, caption=f"SPZ: {spz}")
+                with c_qr2:
+                    st.markdown(f"**Odkaz pro QR kód:**")
+                    st.code(url_adresa)
+                    st.download_button(
+                        label=f"📥 Stáhnout QR pro {spz}",
+                        data=qr_bytes,
+                        file_name=f"qr_kod_{spz}.png",
+                        mime="image/png",
+                        key=f"dl_qr_{spz}"
+                    )
+    else:
+        st.info('V databázi nejsou žádná vozidla pro generování QR kódů.')
+
+# ==================== 8. ZÁVADY ====================
 elif akt_sekce == '⚠️ Závady':
     st.header('⚠️ Hlášené závady vozidel')
-    df_zavady = get_zavady()
-    if not df_zavady.empty:
-        render_styled_table(df_zavady)
-        sel_z_id = st.selectbox('ID závady k vyřešení/smazání', df_zavady['id'].tolist(), key='del_zavada_sel')
-        st.markdown('<div class="delete-tile-btn">', unsafe_allow_html=True)
-        if st.button('Smazat / Vyřešit závadu'):
-            smazat_zavadu(sel_z_id)
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+    df_zav = get_zavady()
+    if not df_zav.empty:
+        for idx, z_row in df_zav.iterrows():
+            with st.container():
+                st.markdown(
+                    f"""
+                    <div style="background: white; padding: 15px; border-radius: 10px; border: 1px solid #e2e8f0; margin-bottom: 10px;">
+                        <b>Vozidlo SPZ:</b> {z_row['spz']} | <b>Řidič:</b> {z_row['ridic']} | <b>Datum:</b> {z_row['datum']}<br>
+                        <b>Popis závady:</b> {z_row['popis']}<br>
+                        <b>Stav:</b> <span style="color: #ea580c; font-weight: 700;">{z_row['stav']}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                if st.button(f"Vyřešit / Smazat závadu ID {z_row['id']}", key=f"del_z_{z_row['id']}"):
+                    smazat_zavadu(z_row['id'])
+                    st.rerun()
     else:
-        st.info('Žádné nahlášené závady.')
+        st.success('Žádné nahlášené závady.')
