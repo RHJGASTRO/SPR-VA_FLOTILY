@@ -1506,39 +1506,55 @@ elif akt_sekce == '📊 Statistiky':
 # ==================== 7. QR KÓD ====================
 elif akt_sekce == '📱 QR Kód':
     st.header('📱 Generátor QR kódů pro řidiče')
-    st.markdown('Každé vozidlo má svůj jedinečný QR kód. Po naskenování mobilním telefonem se řidiči otevře zjednodušený formulář pro zápis tankování/nabíjení a hlášení závad.')
+    st.markdown('Vyberte řidiče a vozidlo pro vygenerování unikátního QR kódu a mobilního odkazu pro zápis tankování/nabíjení a hlášení závad.')
 
     df_auta = get_vsechna_auta()
-    if not df_auta.empty:
-        try:
-            host_ip = socket.gethostbyname(socket.gethostname())
-        except Exception:
-            host_ip = 'localhost'
-            
-        base_url = f"http://{host_ip}:8501"
+    df_ridici_qr = get_ridici()
 
-        for index, row in df_auta.iterrows():
-            spz = row['spz']
-            nazev = row['nazev']
-            ridic = row['staly_ridic'] if row['staly_ridic'] != 'Neuveden' else 'Neznámý řidič'
+    seznam_ridicu_qr = []
+    if not df_ridici_qr.empty and 'jmeno' in df_ridici_qr.columns:
+        seznam_ridicu_qr.extend(df_ridici_qr['jmeno'].dropna().tolist())
+    if not df_auta.empty and 'staly_ridic' in df_auta.columns:
+        seznam_ridicu_qr.extend(df_auta['staly_ridic'].dropna().tolist())
+    
+    seznam_ridicu_qr = sorted(list(set([str(r).strip() for r in seznam_ridicu_qr if str(r).strip() and str(r).strip() != 'Neuveden'])))
+    if not seznam_ridicu_qr:
+        seznam_ridicu_qr = ["Neznámý řidič"]
 
-            url_adresa = f"{base_url}/?spz={spz}&ridic={ridic}"
+    col_q1, col_q2 = st.columns(2)
+    with col_q1:
+        vybrany_ridic_qr = st.selectbox("1. Jméno řidiče", seznam_ridicu_qr, key="qr_select_ridic")
+    
+    with col_q2:
+        if not df_auta.empty:
+            df_auta['car_label'] = df_auta.apply(lambda r: f"{r['nazev']} (SPZ: {r['spz']})", axis=1)
+            vybrane_auto_label = st.selectbox("2. Typ auta + SPZ", df_auta['car_label'].tolist(), key="qr_select_auto")
+            vybrane_auto_row = df_auta[df_auta['car_label'] == vybrane_auto_label].iloc[0]
+            vybrana_spz = vybrane_auto_row['spz']
+        else:
+            vybrana_spz = None
 
-            with st.expander(f"🚗 {nazev} (SPZ: {spz}) – Stálý řidič: {ridic}"):
-                c_qr1, c_qr2 = st.columns([1, 2])
-                with c_qr1:
-                    qr_bytes = generuj_qr_kod(url_adresa)
-                    st.image(qr_bytes, width=200, caption=f"SPZ: {spz}")
-                with c_qr2:
-                    st.markdown(f"**Odkaz pro QR kód:**")
-                    st.code(url_adresa)
-                    st.download_button(
-                        label=f"📥 Stáhnout QR pro {spz}",
-                        data=qr_bytes,
-                        file_name=f"qr_kod_{spz}.png",
-                        mime="image/png",
-                        key=f"dl_qr_{spz}"
-                    )
+    if vybrana_spz:
+        base_url = "https://spr-vaflotily-ys5pzghvkp3zoyxgebryvv.streamlit.app/"
+        url_adresa = f"{base_url}?spz={vybrana_spz}&ridic={vybrany_ridic_qr}"
+
+        st.markdown('---')
+        st.subheader(f"Vygenerovaný QR kód pro řidiče **{vybrany_ridic_qr}** a vozidlo **{vybrana_spz}**")
+
+        c_qr1, c_qr2 = st.columns([1, 2])
+        with c_qr1:
+            qr_bytes = generuj_qr_kod(url_adresa)
+            st.image(qr_bytes, width=220, caption=f"SPZ: {vybrana_spz} | Řidič: {vybrany_ridic_qr}")
+        with c_qr2:
+            st.markdown(f"**Odkaz pro QR kód:**")
+            st.code(url_adresa)
+            st.download_button(
+                label=f"📥 Stáhnout QR kód (PNG)",
+                data=qr_bytes,
+                file_name=f"qr_kod_{vybrana_spz}_{vybrany_ridic_qr.replace(' ', '_')}.png",
+                mime="image/png",
+                key="dl_qr_custom"
+            )
     else:
         st.info('V databázi nejsou žádná vozidla pro generování QR kódů.')
 
