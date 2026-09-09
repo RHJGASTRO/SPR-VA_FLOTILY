@@ -1,5 +1,5 @@
 # ==========================================
-# VERZE 6.2.3 - Správa flotily - RHJ Gastro
+# VERZE 6.2.4 - Správa flotily - RHJ Gastro
 # ==========================================
 
 import asyncio
@@ -544,7 +544,7 @@ def ziskej_upozorneni():
 init_db()
 
 st.set_page_config(
-    page_title='Správa flotily - RHJ Gastro [v6.2.3]', page_icon='🚀', layout='wide'
+    page_title='Správa flotily - RHJ Gastro [v6.2.4]', page_icon='🚀', layout='wide'
 )
 
 if 'active_tab' not in st.session_state:
@@ -821,7 +821,7 @@ if qr_spz_param or st.session_state.get('simulovat_ridice', False):
                 </div>
                 <div>
                     <h1 style="color: #5b4b8a !important; margin: 0; font-size: 32px !important; font-weight: 900;">RHJ Gastro – Rozhraní pro řidiče</h1>
-                    <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rychlý záznam tankování / nabíjení pro vozidlo (v6.2.3)</p>
+                    <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rychlý záznam tankování / nabíjení pro vozidlo (v6.2.4)</p>
                 </div>
             </div>
         </div>
@@ -984,7 +984,7 @@ st.markdown(
             </div>
             <div>
                 <h1 style="color: #5b4b8a !important; margin: 0; font-size: 32px !important; font-weight: 900;">RHJ Gastro – Správa vozového parku</h1>
-                <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rozvoz hotových jídel — Fleet Management & Operations System (v6.2.3)</p>
+                <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rozvoz hotových jídel — Fleet Management & Operations System (v6.2.4)</p>
             </div>
         </div>
         <div style="text-align: right; display: flex; gap: 10px; align-items: center;">
@@ -1506,57 +1506,107 @@ elif akt_sekce == '📊 Statistiky':
 # ==================== 7. QR KÓD ====================
 elif akt_sekce == '📱 QR Kód':
     st.header('📱 Generátor QR kódů pro řidiče')
-    st.markdown('Vyberte řidiče a vozidlo pro vygenerování unikátního QR kódu a mobilního odkazu pro zápis tankování/nabíjení a hlášení závad.')
-
-    df_auta = get_vsechna_auta()
-    df_ridici_qr = get_ridici()
-
-    seznam_ridicu_qr = []
-    if not df_ridici_qr.empty and 'jmeno' in df_ridici_qr.columns:
-        seznam_ridicu_qr.extend(df_ridici_qr['jmeno'].dropna().tolist())
-    if not df_auta.empty and 'staly_ridic' in df_auta.columns:
-        seznam_ridicu_qr.extend(df_auta['staly_ridic'].dropna().tolist())
     
-    seznam_ridicu_qr = sorted(list(set([str(r).strip() for r in seznam_ridicu_qr if str(r).strip() and str(r).strip() != 'Neuveden'])))
-    if not seznam_ridicu_qr:
-        seznam_ridicu_qr = ["Neznámý řidič"]
-
-    col_q1, col_q2 = st.columns(2)
-    with col_q1:
-        vybrany_ridic_qr = st.selectbox("1. Jméno řidiče", seznam_ridicu_qr, key="qr_select_ridic")
+    qr_sub_tab1, qr_sub_tab2 = st.tabs(["Jednotlivý QR kód", "🖨️ Hromadný tisk QR kódů (A4)"])
     
-    with col_q2:
-        if not df_auta.empty:
-            df_auta['car_label'] = df_auta.apply(lambda r: f"{r['nazev']} (SPZ: {r['spz']})", axis=1)
-            vybrane_auto_label = st.selectbox("2. Typ auta + SPZ", df_auta['car_label'].tolist(), key="qr_select_auto")
-            vybrane_auto_row = df_auta[df_auta['car_label'] == vybrane_auto_label].iloc[0]
-            vybrana_spz = vybrane_auto_row['spz']
+    with qr_sub_tab1:
+        st.markdown('Vyberte řidiče a vozidlo pro vygenerování unikátního QR kódu a mobilního odkazu pro zápis tankování/nabíjení a hlášení závad.')
+
+        df_auta = get_vsechna_auta()
+        df_ridici_qr = get_ridici()
+
+        seznam_ridicu_qr = []
+        if not df_ridici_qr.empty and 'jmeno' in df_ridici_qr.columns:
+            seznam_ridicu_qr.extend(df_ridici_qr['jmeno'].dropna().tolist())
+        if not df_auta.empty and 'staly_ridic' in df_auta.columns:
+            seznam_ridicu_qr.extend(df_auta['staly_ridic'].dropna().tolist())
+        
+        seznam_ridicu_qr = sorted(list(set([str(r).strip() for r in seznam_ridicu_qr if str(r).strip() and str(r).strip() != 'Neuveden'])))
+        if not seznam_ridicu_qr:
+            seznam_ridicu_qr = ["Neznámý řidič"]
+
+        col_q1, col_q2 = st.columns(2)
+        with col_q1:
+            vybrany_ridic_qr = st.selectbox("1. Jméno řidiče", seznam_ridicu_qr, key="qr_select_ridic")
+        
+        with col_q2:
+            if not df_auta.empty:
+                df_auta['car_label'] = df_auta.apply(lambda r: f"{r['nazev']} (SPZ: {r['spz']})", axis=1)
+                vybrane_auto_label = st.selectbox("2. Typ auta + SPZ", df_auta['car_label'].tolist(), key="qr_select_auto")
+                vybrane_auto_row = df_auta[df_auta['car_label'] == vybrane_auto_label].iloc[0]
+                vybrana_spz = vybrane_auto_row['spz']
+            else:
+                vybrana_spz = None
+
+        if vybrana_spz:
+            base_url = "https://spr-vaflotily-ys5pzghvkp3zoyxgebryvv.streamlit.app/"
+            url_adresa = f"{base_url}?spz={vybrana_spz}&ridic={vybrany_ridic_qr}"
+
+            st.markdown('---')
+            st.subheader(f"Vygenerovaný QR kód pro řidiče **{vybrany_ridic_qr}** a vozidlo **{vybrana_spz}**")
+
+            c_qr1, c_qr2 = st.columns([1, 2])
+            with c_qr1:
+                qr_bytes = generuj_qr_kod(url_adresa)
+                st.image(qr_bytes, width=220, caption=f"SPZ: {vybrana_spz} | Řidič: {vybrany_ridic_qr}")
+            with c_qr2:
+                st.markdown(f"**Odkaz pro QR kód:**")
+                st.code(url_adresa)
+                st.download_button(
+                    label=f"📥 Stáhnout QR kód (PNG)",
+                    data=qr_bytes,
+                    file_name=f"qr_kod_{vybrana_spz}_{vybrany_ridic_qr.replace(' ', '_')}.png",
+                    mime="image/png",
+                    key="dl_qr_custom"
+                )
         else:
-            vybrana_spz = None
+            st.info('V databázi nejsou žádná vozidla pro generování QR kódů.')
 
-    if vybrana_spz:
-        base_url = "https://spr-vaflotily-ys5pzghvkp3zoyxgebryvv.streamlit.app/"
-        url_adresa = f"{base_url}?spz={vybrana_spz}&ridic={vybrany_ridic_qr}"
-
-        st.markdown('---')
-        st.subheader(f"Vygenerovaný QR kód pro řidiče **{vybrany_ridic_qr}** a vozidlo **{vybrana_spz}**")
-
-        c_qr1, c_qr2 = st.columns([1, 2])
-        with c_qr1:
-            qr_bytes = generuj_qr_kod(url_adresa)
-            st.image(qr_bytes, width=220, caption=f"SPZ: {vybrana_spz} | Řidič: {vybrany_ridic_qr}")
-        with c_qr2:
-            st.markdown(f"**Odkaz pro QR kód:**")
-            st.code(url_adresa)
-            st.download_button(
-                label=f"📥 Stáhnout QR kód (PNG)",
-                data=qr_bytes,
-                file_name=f"qr_kod_{vybrana_spz}_{vybrany_ridic_qr.replace(' ', '_')}.png",
-                mime="image/png",
-                key="dl_qr_custom"
-            )
-    else:
-        st.info('V databázi nejsou žádná vozidla pro generování QR kódů.')
+    with qr_sub_tab2:
+        st.subheader("🖨️ Hromadný přehled QR kódů pro tisk na A4")
+        st.markdown("Zde vidíte mřížku všech vozidel. Můžete ji pohodlně vytisknout přes tiskové okno prohlížeče (Ctrl+P / Cmd+P), vystřihnout a zalaminovat do aut.")
+        
+        if st.button("🖨️ Spustit tisk stránky (Otevřít tiskové okno)"):
+            st.markdown("""
+                <script>
+                    window.print();
+                </script>
+            """, unsafe_allow_html=True)
+            
+        st.markdown("---")
+        
+        df_all_cars_print = get_vsechna_auta()
+        if not df_all_cars_print.empty:
+            base_url = "https://spr-vaflotily-ys5pzghvkp3zoyxgebryvv.streamlit.app/"
+            
+            # Vykreslení do mřížky (po 3 sloupcích)
+            cars_list_p = df_all_cars_print.to_dict('records')
+            for i in range(0, len(cars_list_p), 3):
+                p_cols = st.columns(3)
+                for j in range(3):
+                    if i + j < len(cars_list_p):
+                        car = cars_list_p[i + j]
+                        car_spz = car['spz']
+                        car_nazev = car['nazev']
+                        car_ridic = car['staly_ridic'] if car['staly_ridic'] != 'Neuveden' else 'Neznámý řidič'
+                        
+                        print_url = f"{base_url}?spz={car_spz}&ridic={car_ridic}"
+                        q_img_bytes = generuj_qr_kod(print_url)
+                        
+                        encoded_img = base64.b64encode(q_img_bytes).decode()
+                        
+                        with p_cols[j]:
+                            st.markdown(f"""
+                                <div style="border: 2px dashed #5b4b8a; border-radius: 12px; padding: 15px; text-align: center; background: white; margin-bottom: 15px; box-shadow: 0 2px 6px rgba(0,0,0,0.05);">
+                                    <h4 style="margin: 0 0 5px 0; color: #5b4b8a; font-size: 16px;">RHJ Gastro – Flotila</h4>
+                                    <div style="font-size: 18px; font-weight: 900; color: #1e1b29; margin-bottom: 5px;">{car_spz}</div>
+                                    <div style="font-size: 13px; color: #444; margin-bottom: 8px;">{car_nazev}<br>Řidič: <b>{car_ridic}</b></div>
+                                    <img src="data:image/png;base64,{encoded_img}" width="150" style="margin: 5px 0;" />
+                                    <div style="font-size: 10px; color: #777; margin-top: 5px;">Naskenujte pro zápis tankování / závady</div>
+                                </div>
+                            """, unsafe_allow_html=True)
+        else:
+            st.info("V databázi nejsou žádná vozidla pro hromadný tisk.")
 
 # ==================== 8. ZÁVADY ====================
 elif akt_sekce == '⚠️ Závady':
