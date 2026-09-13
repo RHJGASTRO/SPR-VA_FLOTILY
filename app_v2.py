@@ -1,5 +1,5 @@
 # ==========================================
-# VERZE 6.4.0 - Správa flotily - RHJ Gastro (MODULARIZOVÁNO)
+# VERZE 6.8.1 - Správa flotily - RHJ Gastro
 # ==========================================
 
 import asyncio
@@ -9,10 +9,20 @@ from datetime import datetime, timedelta
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
-# Importujeme funkce z našich nových rozdělených souborů
+# Importujeme funkce z našich DB a pomocných souborů
 from db import *
 from utils import *
+
+# --- LOKÁLNÍ UPDATE FUNKCE ---
+def oznacit_zavadu_opraveno(zavada_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE zavady SET stav = 'Opraveno' WHERE id = ?", (zavada_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 # Oprava pro asyncio na Windows
 if sys.platform == 'win32':
@@ -20,11 +30,11 @@ if sys.platform == 'win32':
 
 SUPERVISOR_PASSWORD = 'supervisor789'
 
-# Spuštění inicializace DB
+# Spuštění inicializace a nahrání fiktivních dat
 init_db()
 
 st.set_page_config(
-    page_title='Správa flotily - RHJ Gastro [v6.4.0]', page_icon='🚀', layout='wide'
+    page_title='Správa flotily - RHJ Gastro [v6.8.1]', page_icon='🚀', layout='wide'
 )
 
 if 'active_tab' not in st.session_state:
@@ -208,7 +218,7 @@ if qr_spz_param or st.session_state.get('simulovat_ridice', False):
                 </div>
                 <div>
                     <h1 style="color: #5b4b8a !important; margin: 0; font-size: 32px !important; font-weight: 900;">RHJ Gastro – Rozhraní pro řidiče</h1>
-                    <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rychlý záznam tankování / nabíjení pro vozidlo (v6.4.0)</p>
+                    <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rychlý záznam tankování / nabíjení pro vozidlo (v6.8.1)</p>
                 </div>
             </div>
         </div>
@@ -286,7 +296,6 @@ if qr_spz_param or st.session_state.get('simulovat_ridice', False):
                         else:
                             st.error('Zadejte prosím své jméno.')
             else:
-                res_kwh = ziskej_admin_heslo() 
                 conn = get_connection()
                 cursor = conn.cursor()
                 res_kwh = cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'").fetchone()
@@ -372,7 +381,7 @@ st.markdown(
             </div>
             <div>
                 <h1 style="color: #5b4b8a !important; margin: 0; font-size: 32px !important; font-weight: 900;">RHJ Gastro – Správa vozového parku</h1>
-                <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rozvoz hotových jídel — Fleet Management & Operations System (v6.4.0)</p>
+                <p style="color: #3d3156 !important; margin: 4px 0 0 0; font-size: 15px !important; font-weight: 600;">Rozvoz hotových jídel — Fleet Management & Operations System (v6.8.1)</p>
             </div>
         </div>
         <div style="text-align: right; display: flex; gap: 10px; align-items: center;">
@@ -629,6 +638,15 @@ if akt_sekce == '🏢 Vozidla':
 
         df_auta = get_vsechna_auta()
         
+        # --- Zjištění aktivních závad pro zobrazení varování ---
+        df_vsechny_zavady = get_zavady()
+        aktivni_spz_kount = {}
+        if not df_vsechny_zavady.empty:
+            aktivni_df = df_vsechny_zavady[df_vsechny_zavady['stav'].astype(str).str.strip().str.lower() != 'opraveno']
+            if not aktivni_df.empty:
+                kount_series = aktivni_df.groupby(aktivni_df['spz'].astype(str).str.strip()).size()
+                aktivni_spz_kount = kount_series.to_dict()
+        
         search_auta = st.text_input("🔍 Hledat vozidlo (SPZ, model, řidič)...", "")
         if search_auta:
             mask = df_auta['spz'].str.contains(search_auta, case=False, na=False) | \
@@ -670,12 +688,19 @@ if akt_sekce == '🏢 Vozidla':
                     dz_semafor_1 = get_semafor_html(row1['dz_do'])
                     poj_semafor_1 = get_semafor_html(row1['pojisteni_do'])
                     druh_pneu_text = row1.get('pneu_druh', 'Celoroční')
+                    
+                    spz_clean_1 = str(row1['spz']).strip()
+                    if spz_clean_1 in aktivni_spz_kount:
+                        pocet_1 = aktivni_spz_kount[spz_clean_1]
+                        varovani_1 = f'<span style="color: #dc2626; font-size: 1.2em; margin-left: 8px;" title="Aktivní porucha!">⚠️ ({pocet_1})</span>'
+                    else:
+                        varovani_1 = ''
 
                     with cols[0]:
                         st.markdown(
                             f"""
                                 <div class="{card_class1}">
-                                    <h3 style="margin: 0;">🚗 {row1['nazev']}</h3>
+                                    <h3 style="margin: 0;">🚗 {row1['nazev']}{varovani_1}</h3>
                                     <p style="margin: 4px 0;"><b>SPZ:</b> <span style="font-family: monospace; font-weight: 700;">{row1['spz']}</span></p>
                                     <p style="margin: 4px 0;"><b>Pohonná hmota:</b> {row1['typ_pohonu']}</p>
                                     <p style="margin: 4px 0;"><b>Stálý řidič:</b> {row1['staly_ridic']}</p>
@@ -715,12 +740,19 @@ if akt_sekce == '🏢 Vozidla':
                         dz_semafor_2 = get_semafor_html(row2['dz_do'])
                         poj_semafor_2 = get_semafor_html(row2['pojisteni_do'])
                         druh_pneu_text2 = row2.get('pneu_druh', 'Celoroční')
+                        
+                        spz_clean_2 = str(row2['spz']).strip()
+                        if spz_clean_2 in aktivni_spz_kount:
+                            pocet_2 = aktivni_spz_kount[spz_clean_2]
+                            varovani_2 = f'<span style="color: #dc2626; font-size: 1.2em; margin-left: 8px;" title="Aktivní porucha!">⚠️ ({pocet_2})</span>'
+                        else:
+                            varovani_2 = ''
 
                         with cols[1]:
                             st.markdown(
                                 f"""
                                     <div class="{card_class2}">
-                                        <h3 style="margin: 0;">🚗 {row2['nazev']}</h3>
+                                        <h3 style="margin: 0;">🚗 {row2['nazev']}{varovani_2}</h3>
                                         <p style="margin: 4px 0;"><b>SPZ:</b> <span style="font-family: monospace; font-weight: 700;">{row2['spz']}</span></p>
                                         <p style="margin: 4px 0;"><b>Pohonná hmota:</b> {row2['typ_pohonu']}</p>
                                         <p style="margin: 4px 0;"><b>Stálý řidič:</b> {row2['staly_ridic']}</p>
@@ -751,6 +783,14 @@ if akt_sekce == '🏢 Vozidla':
                 df_table['dz_do'] = df_table['dz_do'].apply(get_semafor_html)
                 df_table['pojisteni_do'] = df_table['pojisteni_do'].apply(get_semafor_html)
                 
+                def get_nazev_with_warning(r):
+                    spz_c = str(r['spz']).strip()
+                    if spz_c in aktivni_spz_kount:
+                        return f"🚗 {r['nazev']} ⚠️ ({aktivni_spz_kount[spz_c]})"
+                    return f"🚗 {r['nazev']}"
+
+                df_table['nazev'] = df_table.apply(get_nazev_with_warning, axis=1)
+                
                 st.markdown('<div class="table-container">', unsafe_allow_html=True)
                 render_styled_table(df_table[['spz', 'nazev', 'typ_pohonu', 'stk_do', 'dz_do', 'pojisteni_do', 'pneu_druh', 'staly_ridic']])
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -759,25 +799,41 @@ if akt_sekce == '🏢 Vozidla':
 
 # ==================== 2. NASTAVENÍ ====================
 elif akt_sekce == '⚙️ Nastavení':
-    st.header('⚙️ Nastavení aplikace')
+    st.header('⚙️ Nastavení aplikace & Notifikace')
     conn = get_connection()
     cursor = conn.cursor()
     cena_kwh = cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'cena_kwh'").fetchone()[0]
     admin_h = cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'admin_heslo'").fetchone()[0]
+    
+    res_mail = cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'sefka_mail'").fetchone()
+    sefka_mail_val = res_mail[0] if res_mail else 'rhjvedeni@gmail.com'
+    
+    res_mob = cursor.execute("SELECT hodnota FROM nastaveni WHERE klic = 'sefka_mobil'").fetchone()
+    sefka_mobil_val = res_mob[0] if res_mob else ''
     conn.close()
 
     with st.form('nastaveni_form'):
+        st.subheader("Pravidla a zabezpečení")
         nova_cena = st.number_input('Cena elektřiny za kWh (Kč)', value=float(cena_kwh), format='%.2f')
         nove_heslo = st.text_input('Změnit administrátorské heslo', value=str(admin_h), type='password')
+        
+        st.markdown('---')
+        st.subheader("📬 Notifikace pro vedení (Šéfka)")
+        st.markdown("Zde lze nastavit kam (e-mail / mobilní číslo) budou směřovat upozornění na blížící se STK, dálniční známky, pojištění, propadlé řidičáky a jiné výstrahy.")
+        
+        novy_mail = st.text_input('E-mail pro notifikace', value=str(sefka_mail_val))
+        novy_mobil = st.text_input('Mobilní číslo pro notifikace', value=str(sefka_mobil_val), placeholder="+420 777 000 000")
         
         if st.form_submit_button('Uložit nastavení'):
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute('UPDATE nastaveni SET hodnota = ? WHERE klic = "cena_kwh"', (str(nova_cena),))
             cursor.execute('UPDATE nastaveni SET hodnota = ? WHERE klic = "admin_heslo"', (str(nove_heslo),))
+            cursor.execute('INSERT OR REPLACE INTO nastaveni (klic, hodnota) VALUES ("sefka_mail", ?)', (str(novy_mail),))
+            cursor.execute('INSERT OR REPLACE INTO nastaveni (klic, hodnota) VALUES ("sefka_mobil", ?)', (str(novy_mobil),))
             conn.commit()
             conn.close()
-            st.success('Nastavení úspěšně uloženo!')
+            st.success('Nastavení a notifikační kontakty úspěšně uloženy!')
 
 # ==================== 3. TANKOVÁNÍ ====================
 elif akt_sekce == '⛽ Tankování':
@@ -1125,7 +1181,8 @@ elif akt_sekce == '📊 Statistiky':
     else:
         st.info("Zatím chybí data o tankování.")
 
-    # ==================== UPOZORNĚNÍ PANEL ====================
+    # ==================== UPOZORNĚNÍ PANEL (pouze ve statistikách) ====================
+    upoz_stk, upoz_dz, upoz_poj, upoz_olej, upoz_ridicaky, upoz_pneu = ziskej_upozorneni()
     if any([upoz_stk, upoz_dz, upoz_poj, upoz_olej, upoz_ridicaky, upoz_pneu]):
         st.markdown('---')
         st.subheader('🚨 Centrální upozornění flotily')
@@ -1152,24 +1209,107 @@ elif akt_sekce == '📱 QR Kód':
     st.header('📱 Generátor QR kódů')
     df_auta_qr = get_vsechna_auta()
     if not df_auta_qr.empty:
-        qr_sel = st.selectbox("Vyberte vozidlo", df_auta_qr['spz'].tolist())
-        sel_row = df_auta_qr[df_auta_qr['spz'] == qr_sel].iloc[0]
-        qr_drv = st.text_input("Předvyplnit řidiče", value=sel_row['staly_ridic'])
-        app_url = f"http://{socket.gethostbyname(socket.gethostname())}:8501/?spz={qr_sel}&ridic={qr_drv}"
-        st.markdown(f"**URL:** `{app_url}`")
-        img_bytes = generuj_qr_kod(app_url)
-        st.image(img_bytes, width=300)
-        st.download_button("Stáhnout QR", data=img_bytes, file_name=f"qr_{qr_sel}.png", mime="image/png")
+        qr_rezim = st.radio("Zvolte režim QR kódů", ["Jednotlivý QR kód", "Hromadná mřížka pro tisk (všechna auta)"], horizontal=True)
+        
+        if qr_rezim == "Jednotlivý QR kód":
+            qr_sel = st.selectbox("Vyberte vozidlo", df_auta_qr['spz'].tolist())
+            sel_row = df_auta_qr[df_auta_qr['spz'] == qr_sel].iloc[0]
+            qr_drv = st.text_input("Předvyplnit řidiče", value=sel_row['staly_ridic'])
+            app_url = f"http://{socket.gethostbyname(socket.gethostname())}:8501/?spz={qr_sel}&ridic={qr_drv}"
+            st.markdown(f"**URL:** `{app_url}`")
+            img_bytes = generuj_qr_kod(app_url)
+            st.image(img_bytes, width=300)
+            st.download_button("Stáhnout QR", data=img_bytes, file_name=f"qr_{qr_sel}.png", mime="image/png")
+        else:
+            st.markdown("### 🖨️ Hromadný tisk QR kódů (karty do peněženky / na stínítko)")
+            
+            # Volba mřížky
+            mrizka_styl = st.radio("Vyberte rozvržení mřížky na stránku:", ["3x3 (9 kódů na stránku)", "4x4 (16 kódů na stránku - menší)"], horizontal=True)
+            
+            col_tisk1, col_tisk2 = st.columns([1, 4])
+            with col_tisk1:
+                # Tlačítko pro vyvolání systémového tiskového dialogu
+                components.html(
+                    """
+                    <button onclick="window.print();" style="background-color: #5b4b8a; color: white; padding: 12px 20px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 15px; width: 100%; box-shadow: 0 4px 12px rgba(91,75,138,0.3);">
+                        🖨️ Vytisknout stránku
+                    </button>
+                    """,
+                    height=50
+                )
+            
+            cols_count = 3 if "3x3" in mrizka_styl else 4
+            qr_size = 110 if "4x4" in mrizka_styl else 140
+            
+            # Generování mřížky
+            auta_seznam = df_auta_qr.to_dict('records')
+            pocet_aut = len(auta_seznam)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            for i in range(0, pocet_aut, cols_count):
+                cols = st.columns(cols_count)
+                for j in range(cols_count):
+                    if i + j < pocet_aut:
+                        car = auta_seznam[i + j]
+                        spz_val = car['spz']
+                        nazev_val = car['nazev']
+                        ridic_val = car['staly_ridic'] if car['staly_ridic'] != 'Neuveden' else 'Řidič'
+                        
+                        target_url = f"http://{socket.gethostbyname(socket.gethostname())}:8501/?spz={spz_val}&ridic={ridic_val}"
+                        qr_bytes = generuj_qr_kod(target_url)
+                        
+                        with cols[j]:
+                            st.markdown(
+                                f"""
+                                <div style="border: 2px dashed #b1a7d1; border-radius: 8px; padding: 8px; text-align: center; margin-bottom: 10px; background: white; page-break-inside: avoid;">
+                                    <div style="font-size: 13px; font-weight: 700; color: #1e1b29; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{nazev_val}</div>
+                                    <div style="font-family: monospace; font-size: 15px; font-weight: 900; color: #5b4b8a; margin: 2px 0;">{spz_val}</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                            # Zobrazení QR kódů
+                            st.image(qr_bytes, width=qr_size)
+                            st.markdown(f"<p style='text-align: center; font-size: 11px; color: #555; margin-top: -5px;'>{ridic_val}</p>", unsafe_allow_html=True)
 
 # ==================== 9. ZÁVADY ====================
 elif akt_sekce == '⚠️ Závady':
     st.header('⚠️ Hlášené závady')
     df_zavady = get_zavady()
+    
     if not df_zavady.empty:
-        render_styled_table(df_zavady)
-        z_sel_id = st.selectbox("Vyberte ID k vyřízení", df_zavady['id'].tolist())
-        if st.button("Smazat vybranou závadu"):
-            smazat_zavadu(int(z_sel_id))
-            st.rerun()
+        df_zavady_aktivni = df_zavady[df_zavady['stav'] != 'Opraveno']
+        df_zavady_opravene = df_zavady[df_zavady['stav'] == 'Opraveno']
+        
+        st.subheader("🚨 Aktivní poruchy (Čeká na opravu)")
+        if not df_zavady_aktivni.empty:
+            render_styled_table(df_zavady_aktivni)
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Vyřešit závadu**")
+                z_sel_id_oprava = st.selectbox("Vyberte ID k vyřízení:", df_zavady_aktivni['id'].tolist(), key="oprava_sel")
+                if st.button("✅ Zadat jako OPRAVENO"):
+                    oznacit_zavadu_opraveno(int(z_sel_id_oprava))
+                    st.rerun()
+            with c2:
+                st.markdown("**Smazat chybný záznam**")
+                z_sel_id_smazat = st.selectbox("Vyberte ID ke smazání:", df_zavady_aktivni['id'].tolist(), key="smazat_sel_1")
+                if st.button("🗑️ Smazat vybranou závadu"):
+                    smazat_zavadu(int(z_sel_id_smazat))
+                    st.rerun()
+        else:
+            st.success("Aktuálně neevidujeme žádné aktivní závady!")
+            
+        if not df_zavady_opravene.empty:
+            st.markdown('---')
+            st.subheader("✅ Historie opravených závad")
+            render_styled_table(df_zavady_opravene)
+            
+            z_sel_id_historie = st.selectbox("Vyberte ID z historie ke smazání:", df_zavady_opravene['id'].tolist(), key="smazat_sel_2")
+            if st.button("🗑️ Smazat záznam z historie"):
+                smazat_zavadu(int(z_sel_id_historie))
+                st.rerun()
     else:
         st.info("Žádné nahlášené závady.")
