@@ -985,11 +985,13 @@ elif akt_sekce == '🛠️ Servis':
     
     st.markdown("""
         <div style="padding: 18px; border-radius: 12px; border: 1px solid #d1cce3; margin-bottom: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
-            <h4 style="margin-top: 0;">🔗 Doporučené partneři a e-shopy pro náhradní díly</h4>
-            <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 12px;">
-                <a href="https://www.intercars.cz/" target="_blank" style="padding: 10px 16px; border: 1px solid #e2e8f0; font-weight: 600;">🌐 Inter Cars</a>
-                <a href="https://www.autorozvody.cz/cs" target="_blank" style="padding: 10px 16px; border: 1px solid #e2e8f0; font-weight: 600;">🌐 Autorozvody</a>
-                <a href="https://www.autokelly.cz/" target="_blank" style="padding: 10px 16px; border: 1px solid #e2e8f0; font-weight: 600;">🌐 Auto Kelly</a>
+            <h4 style="margin-top: 0;">🔗 Doporučení partneři a e-shopy pro náhradní díly</h4>
+            <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-top: 12px;">
+                <a href="https://www.autorozvody.cz/cs" target="_blank" style="padding: 10px 16px; border: 1px solid #e2e8f0; border-radius: 8px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">🌐 Autorozvody</a>
+                <a href="https://www.autodoc.cz/" target="_blank" style="padding: 10px 16px; border: 1px solid #e2e8f0; border-radius: 8px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">🌐 AutoDoc</a>
+                <a href="https://cz.intercars.com/" target="_blank" style="padding: 10px 16px; border: 1px solid #e2e8f0; border-radius: 8px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">🌐 Inter Cars</a>
+                <a href="https://www.autodily-cardo.cz/" target="_blank" style="padding: 10px 16px; border: 1px solid #e2e8f0; border-radius: 8px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">🌐 Autodíly Cardo</a>
+                <a href="https://www.autodily-pema.cz/?cfpm_ref=https%3A%2F%2Fwww.google.com%2F" target="_blank" style="padding: 10px 16px; border: 1px solid #e2e8f0; border-radius: 8px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">🌐 Autodíly Pema</a>
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -1269,7 +1271,7 @@ elif akt_sekce == '📱 QR Kód':
                                 """,
                                 unsafe_allow_html=True
                             )
-                            # Zobrazení QR kódů
+                            # Zobrazení QR kódów
                             st.image(qr_bytes, width=qr_size)
                             st.markdown(f"<p style='text-align: center; font-size: 11px; color: #555; margin-top: -5px;'>{ridic_val}</p>", unsafe_allow_html=True)
 
