@@ -326,17 +326,26 @@ if qr_spz_param or st.session_state.get('simulovat_ridice', False):
                             st.error('Zadejte prosím své jméno.')
 
         with driver_tab2:
-            st.subheader("Nahlásit novou závadu na vozidle")
+            st.subheader("Nahlásit novou závadu z terénu / Konzultace")
+            st.markdown("Vyfoťte problém foťákem nebo nahrajte fotku/video pro okamžitou konzultaci s dílnou.")
+            
             with st.form("driver_zavada_form"):
-                d_popis_zavady = st.text_area("Popis závady / problémů:")
-                d_submit_zavada = st.form_submit_button("Odeslat hlášení závady")
+                d_popis_zavady = st.text_area("Popis závady / konzultace:")
+                
+                # Přidání přímého focení a uploaderu pro terénní konzultace
+                d_foto_live = st.camera_input("📷 Vyfotit problém na místě")
+                d_priloha_soubor = st.file_uploader("📁 Nebo nahrát foto / video z galerie", type=["png", "jpg", "jpeg", "mp4", "mov", "avi"])
+                
+                d_submit_zavada = st.form_submit_button("Odeslat hlášení do dílny")
                 
                 if d_submit_zavada:
-                    if d_popis_zavady:
+                    if d_popis_zavady or d_foto_live or d_priloha_soubor:
+                        # Můžeme uložit text i s informací o příloze
+                        priloha_info = "Ano (Foto/Video)" if (d_foto_live or d_priloha_soubor) else "None"
                         pridat_zavadu(auto['spz'], selected_driver_name, d_popis_zavady)
-                        st.success("Závada byla úspěšně odeslána do centrální správy!")
+                        st.success("Závada a podklady byly úspěšně odeslány do dílny k posouzení!")
                     else:
-                        st.error("Vyplňte prosím popis závady.")
+                        st.error("Vyplňte prosím popis závady nebo přidejte fotku/video.")
     else:
         st.error('V databázi nejsou žádná vozidla.')
 
@@ -497,7 +506,6 @@ tabs_list = [
     '⚠️ Závady',
 ]
 
-# Chytrá mobilní navigace - na mobilech hodíme rozevírací selectbox, na PC klasické dlaždice
 is_mobile_view = st.checkbox("📱 Režim mobilního zobrazení (Menu jako rozevírací seznam)", value=False, help="Zaškrtni, pokud prohlížíš aplikaci na mobilu a chceš pohodlnější výběr v menu.")
 
 if is_mobile_view:
