@@ -60,7 +60,7 @@ if 'dark_mode' not in st.session_state:
 if 'car_view_mode' not in st.session_state:
     st.session_state['car_view_mode'] = 'Karty (Tile View)'
 
-# Dynamické CSS pro podporu světlého a tmavého režimu
+# Dynamické CSS pro podporu světlého a tmavého režimu + mobilní optimalizace
 if st.session_state['dark_mode']:
     THEME_CSS = """
     <style>
@@ -93,7 +93,6 @@ if st.session_state['dark_mode']:
             background: #202024 !important; border-left: 1px solid #323238 !important; border-right: 1px solid #323238 !important; border-bottom: 1px solid #323238 !important;
         }
         
-        /* Ochrana textu v alert boxech (st.info, atd.) */
         [data-testid="stAlert"] p, [data-testid="stAlert"] span { color: #e1e1e6 !important; }
     </style>
     """
@@ -123,7 +122,6 @@ else:
         .car-card-orange { background: linear-gradient(145deg, #ffffff, #fffbeb) !important; border-left: 1px solid #ffedd5 !important; border-right: 1px solid #ffedd5 !important; border-bottom: 1px solid #ffedd5 !important; }
         .car-card-green { background: linear-gradient(145deg, #ffffff, #f0fdf4) !important; border-left: 1px solid #dcfce7 !important; border-right: 1px solid #dcfce7 !important; border-bottom: 1px solid #dcfce7 !important; }
         
-        /* Ochrana textu v alert boxech (st.info, atd.) */
         [data-testid="stAlert"] p, [data-testid="stAlert"] span { color: #1e1b29 !important; }
     </style>
     """
@@ -186,9 +184,11 @@ CLEAN_CSS = THEME_CSS + """
     .oil-scroll-container { max-height: 250px !important; overflow-y: auto !important; overflow-x: hidden !important; padding-right: 6px; margin-top: 8px; }
     [data-testid="stMetricValue"] { font-weight: 800 !important; color: #5b4b8a !important; }
     
+    /* Mobilní optimalizace pro dílnu */
     @media (max-width: 768px) {
-        .main .block-container { padding-left: 1rem; padding-right: 1rem; }
+        .main .block-container { padding-left: 0.75rem; padding-right: 0.75rem; }
         table { font-size: 12px !important; }
+        div.nav-tile-btn button, div.nav-tile-btn-active button { height: 55px !important; font-size: 13px !important; padding: 8px 4px !important; }
     }
 </style>
 """
@@ -484,34 +484,51 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 # ==================== NAVIGACE ====================
 st.markdown('### 🎛️ Hlavní menu')
-nav_col1, nav_col2, nav_col3, nav_col4, nav_col5, nav_col6, nav_col7, nav_col8, nav_col9 = st.columns(9)
 
 tabs_list = [
-    ('🏢 Vozidla', nav_col1),
-    ('⚙️ Nastavení', nav_col2),
-    ('⛽ Tankování', nav_col3),
-    ('💳 Karty', nav_col4),
-    ('🛠️ Servis', nav_col5),
-    ('👥 Řidiči', nav_col6),
-    ('📊 Statistiky', nav_col7),
-    ('📱 QR Kód', nav_col8),
-    ('⚠️ Závady', nav_col9),
+    '🏢 Vozidla',
+    '⚙️ Nastavení',
+    '⛽ Tankování',
+    '💳 Karty',
+    '🛠️ Servis',
+    '👥 Řidiči',
+    '📊 Statistiky',
+    '📱 QR Kód',
+    '⚠️ Závady',
 ]
 
-for title, col in tabs_list:
-    is_active = st.session_state['active_tab'] == title
-    css_class = 'nav-tile-btn-active' if is_active else 'nav-tile-btn'
+# Chytrá mobilní navigace - na mobilech hodíme rozevírací selectbox, na PC klasické dlaždice
+is_mobile_view = st.checkbox("📱 Režim mobilního zobrazení (Menu jako rozevírací seznam)", value=False, help="Zaškrtni, pokud prohlížíš aplikaci na mobilu a chceš pohodlnější výběr v menu.")
 
-    with col:
-        st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
-        if st.button(title, key=f'nav_{title}'):
-            st.session_state['active_tab'] = title
-            st.session_state['car_action'] = 'view'
-            st.session_state['tank_action'] = 'view'
-            st.session_state['servis_action'] = 'view'
-            st.session_state['zavada_action'] = 'view'
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+if is_mobile_view:
+    current_idx = tabs_list.index(st.session_state['active_tab']) if st.session_state['active_tab'] in tabs_list else 0
+    selected_tab_mobile = st.selectbox("📌 Vyber sekci menu:", tabs_list, index=current_idx)
+    if selected_tab_mobile != st.session_state['active_tab']:
+        st.session_state['active_tab'] = selected_tab_mobile
+        st.session_state['car_action'] = 'view'
+        st.session_state['tank_action'] = 'view'
+        st.session_state['servis_action'] = 'view'
+        st.session_state['zavada_action'] = 'view'
+        st.rerun()
+else:
+    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5, nav_col6, nav_col7, nav_col8, nav_col9 = st.columns(9)
+    cols_mapping = [nav_col1, nav_col2, nav_col3, nav_col4, nav_col5, nav_col6, nav_col7, nav_col8, nav_col9]
+    
+    for idx, title in enumerate(tabs_list):
+        col = cols_mapping[idx]
+        is_active = st.session_state['active_tab'] == title
+        css_class = 'nav-tile-btn-active' if is_active else 'nav-tile-btn'
+
+        with col:
+            st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
+            if st.button(title, key=f'nav_{title}'):
+                st.session_state['active_tab'] = title
+                st.session_state['car_action'] = 'view'
+                st.session_state['tank_action'] = 'view'
+                st.session_state['servis_action'] = 'view'
+                st.session_state['zavada_action'] = 'view'
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown('---')
 
